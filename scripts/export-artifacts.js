@@ -39,7 +39,7 @@ async function main() {
     const artifact = await hre.artifacts.readArtifact("DrugTracker");
 
     // ➕ ABI to frontend
-    const frontendAbiPath = path.join(__dirname, "../../pharmatrace-ui/src/abi/DrugTracker.json");
+    const frontendAbiPath = path.join(__dirname, "../../PharmaTrace-UI/src/abi/DrugTracker.json");
     fs.mkdirSync(path.dirname(frontendAbiPath), { recursive: true });
     fs.writeFileSync(frontendAbiPath, JSON.stringify({ abi: artifact.abi }, null, 2));
 
@@ -51,13 +51,13 @@ async function main() {
     console.log("📦 ABI exported to frontend + backend ✅");
 
     // ➕ Contract address to frontend
-    const frontendAddressPath = path.join(__dirname, "../../pharmatrace-ui/src/config/contract-address.js");
+    const frontendAddressPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/contract-address.js");
     fs.mkdirSync(path.dirname(frontendAddressPath), { recursive: true });
     fs.writeFileSync(frontendAddressPath, `export const CONTRACT_ADDRESS = "${address}";\n`);
     console.log("📬 Contract address exported to frontend ✅");
 
     // 🌐 .env.public para Vite frontend
-    const publicEnvPath = path.join(__dirname, "../../pharmatrace-ui/.env.public");
+    const publicEnvPath = path.join(__dirname, "../../PharmaTrace-UI/.env.public");
     const publicEnv = [
         `VITE_CONTRACT_ADDRESS=${address}`,
         `VITE_RPC_URL=${process.env.RPC_URL}`

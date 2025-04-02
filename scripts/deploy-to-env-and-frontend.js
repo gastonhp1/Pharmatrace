@@ -40,7 +40,7 @@ async function main() {
     const artifact = await hre.artifacts.readArtifact("DrugTracker");
 
     // ➕ ABI to frontend
-    const frontendAbiPath = path.join(__dirname, "../../pharmatrace-ui/src/abi/DrugTracker.json");
+    const frontendAbiPath = path.join(__dirname, "../../PharmaTrace-UI/src/abi/DrugTracker.json");
     fs.mkdirSync(path.dirname(frontendAbiPath), { recursive: true });
     fs.writeFileSync(frontendAbiPath, JSON.stringify({ abi: artifact.abi }, null, 2));
 
@@ -52,7 +52,7 @@ async function main() {
     console.log("📦 ABI exported to frontend + backend ✅");
 
     // ➕ Contract address to frontend
-    const frontendAddressPath = path.join(__dirname, "../../pharmatrace-ui/src/config/contract-address.js");
+    const frontendAddressPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/contract-address.js");
     fs.mkdirSync(path.dirname(frontendAddressPath), { recursive: true });
     fs.writeFileSync(frontendAddressPath, `export const CONTRACT_ADDRESS = "${address}";\n`);
     console.log("📬 Contract address exported to frontend ✅");
@@ -67,7 +67,7 @@ async function main() {
         };
     }
 
-    const actorInfoPath = path.join(__dirname, "../../pharmatrace-ui/src/config/actor-info.js");
+    const actorInfoPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/actor-info.js");
     fs.writeFileSync(actorInfoPath, `export const ACTORS = ${JSON.stringify(actorData, null, 2)};\n`);
     console.log("🧠 Actor info exported to frontend ✅");
 }

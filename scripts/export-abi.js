@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const abiPath = path.join(__dirname, "../artifacts/contracts/DrugTracker.sol/DrugTracker.json");
-const outputPath = path.join(__dirname, "../../pharmatrace-ui/src/abi/DrugTracker.json"); // UI route path
+const outputPath = path.join(__dirname, "../../PharmaTrace-UI/src/abi/DrugTracker.json"); // UI route path
 
 function exportAbi() {
     if (!fs.existsSync(abiPath)) {
