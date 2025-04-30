@@ -99,6 +99,13 @@ async function main() {
     console.log("🗂️  Deploy history updated ✅");
 }
 
+    // 📦 Export CargoTracker ABI
+    const cargoArtifact = await hre.artifacts.readArtifact("CargoTracker");
+    const frontendCargoAbiPath = path.join(__dirname, "../../Pharmatrace-UI/src/abi/CargoTracker.json");
+    fs.mkdirSync(path.dirname(frontendCargoAbiPath), { recursive: true });
+    fs.writeFileSync(frontendCargoAbiPath, JSON.stringify({ abi: cargoArtifact.abi }, null, 2));
+    console.log("📦 CargoTracker ABI exported to frontend ✅");
+
 main().catch((err) => {
     console.error("❌ Error:", err);
     process.exit(1);

@@ -2,10 +2,35 @@ require("dotenv").config();
 const { ethers } = require("ethers");
 const contractJson = require("../../scripts/abi/DrugTracker.json");
 
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);  // ✅ Tomamos del .env
+const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 const contractAddress = process.env.CONTRACT_ADDRESS;
 
 const DrugTracker = new ethers.Contract(contractAddress, contractJson.abi, provider);
+
+// ✅ TRAZAR un batch por ID
+async function traceDrug(batchId) {
+    const info = await DrugTracker.getDrugInfo(batchId);
+    const history = await DrugTracker.getDrugHistory(batchId);
+
+    const productionTimestamp = Number(info[2]);
+    const stateLabels = [
+        "Registered",
+        "InDistribution",
+        "InTransit",
+        "InPharmacy",
+        "Delivered",
+        "InUse"
+    ];
+
+    return {
+        name: info[0],
+        manufacturer: info[1],
+        productionDate: new Date(productionTimestamp * 1000).toLocaleDateString(),
+        currentState: stateLabels[info[3]] || "Unknown",
+        currentOwner: info[4],
+        history
+    };
+}
 
 // 📌 Registrar una droga
 async function registerDrug(batchId, drugName, manufacturer) {
@@ -30,4 +55,4 @@ async function transferDrug(batchId, toAddress, newState) {
     return { success: true, message: "Drug transferred successfully." };
 }
 
-module.exports = { registerDrug, transferDrug };
+module.exports = { traceDrug, registerDrug, transferDrug };
