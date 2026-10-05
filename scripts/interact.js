@@ -1,6 +1,20 @@
-require("dotenv").config();
+require("./helpers/loadEnv");
 const { ethers } = require("ethers");
 const contractJson = require("./abi/DrugTracker.json");
+
+const State = {
+    Registered: 0,
+    InDistribution: 1,
+    InTransit: 2,
+    InPharmacy: 3,
+    Delivered: 4,
+    InUse: 5,
+};
+
+function walletFor(envName, provider) {
+    if (!process.env[envName]) throw new Error(`❌ ${envName} missing from .env`);
+    return new ethers.Wallet(process.env[envName], provider);
+}
 
 async function main() {
     const batchNumber = process.argv[2];
@@ -10,49 +24,41 @@ async function main() {
         process.exit(1);
     }
 
-    const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
     const contractAddress = process.env.CONTRACT_ADDRESS;
-
     if (!contractAddress) throw new Error("❌ CONTRACT_ADDRESS missing from .env");
 
+    // cacheTimeout -1: do not reuse cached nonces between consecutive transactions.
+    const provider = new ethers.JsonRpcProvider(
+        process.env.RPC_URL || "http://127.0.0.1:8545",
+        undefined,
+        { cacheTimeout: -1 }
+    );
     const DrugTracker = new ethers.Contract(contractAddress, contractJson.abi, provider);
 
     // ✅ Crear wallets desde claves privadas
     const roles = {
-        manufacturer: new ethers.Wallet(process.env.MANUFACTURER_KEY, provider),
-        distributor: new ethers.Wallet(process.env.DISTRIBUTOR_KEY, provider),
-        warehouse: new ethers.Wallet(process.env.WAREHOUSE_KEY, provider),
-        pharmacy: new ethers.Wallet(process.env.PHARMACY_KEY, provider),
-        patient: new ethers.Wallet(process.env.PATIENT_KEY, provider),
-    };
-
-    const addresses = {
-        manufacturer: roles.manufacturer.address,
-        distributor: roles.distributor.address,
-        warehouse: roles.warehouse.address,
-        pharmacy: roles.pharmacy.address,
-        patient: roles.patient.address,
+        manufacturer: walletFor("MANUFACTURER_KEY", provider),
+        distributor: walletFor("DISTRIBUTOR_KEY", provider),
+        warehouse: walletFor("WAREHOUSE_KEY", provider),
+        pharmacy: walletFor("PHARMACY_KEY", provider),
+        patient: walletFor("PATIENT_KEY", provider),
     };
 
     const drugName = "Amoxicillin 500mg";
     const productionDate = Math.floor(Date.now() / 1000);
     console.log("🆔 Batch number:", batchNumber);
 
-    const State = {
-        Registered: 0,
-        InDistribution: 1,
-        InTransit: 2,
-        InPharmacy: 3,
-        Delivered: 4,
-        InUse: 5,
-    };
-
-    // 🔍 Check si ya está registrado
-    const existing = await DrugTracker.getDrugInfo(batchNumber);
-    const alreadyRegistered = existing[1] !== ethers.ZeroAddress;
+    // 🔍 getDrugInfo reverts for unknown batches, so that is how we tell if it is registered.
+    let alreadyRegistered = true;
+    try {
+        await DrugTracker.getDrugInfo(batchNumber);
+    } catch (err) {
+        if (err.reason !== "Drug does not exist.") throw err;
+        alreadyRegistered = false;
+    }
 
     if (alreadyRegistered) {
-        console.warn(`⚠️ Drug with batch ${batchNumber} already registered by ${existing[1]}. Skipping registration.`);
+        console.warn(`⚠️ Drug with batch ${batchNumber} is already registered. Skipping registration.`);
     } else {
         console.log("📌 Step 1: Registering the drug...");
         const tx = await DrugTracker.connect(roles.manufacturer).registerDrug(
@@ -62,40 +68,34 @@ async function main() {
             productionDate
         );
         await tx.wait();
-        console.log("✅ Drug registered by:", addresses.manufacturer);
+        console.log("✅ Drug registered by:", roles.manufacturer.address);
     }
 
-    // Transfer to Distributor
-    console.log("📦 Step 2: Transferring to distributor...");
-    await DrugTracker.connect(roles.manufacturer).transferDrug(
-        batchNumber,
-        addresses.distributor,
-        State.InDistribution
-    );
+    // Each step hands the batch from one actor to the next. Steps whose recipient is already
+    // in the batch history are skipped, so the script can be re-run to resume a batch.
+    const steps = [
+        { label: "📦 Step 2: Transferring to distributor...", from: "manufacturer", to: "distributor", state: State.InDistribution },
+        { label: "🚚 Step 3: Transferring to warehouse...", from: "distributor", to: "warehouse", state: State.InTransit },
+        { label: "🏪 Step 4: Transferring to pharmacy...", from: "warehouse", to: "pharmacy", state: State.InPharmacy },
+        { label: "👨‍⚕️ Step 5: Delivering to patient...", from: "pharmacy", to: "patient", state: State.Delivered },
+    ];
 
-    // Transfer to Warehouse
-    console.log("🚚 Step 3: Transferring to warehouse...");
-    await DrugTracker.connect(roles.distributor).transferDrug(
-        batchNumber,
-        addresses.warehouse,
-        State.InTransit
-    );
+    for (const step of steps) {
+        console.log(step.label);
 
-    // Transfer to Pharmacy
-    console.log("🏪 Step 4: Transferring to pharmacy...");
-    await DrugTracker.connect(roles.warehouse).transferDrug(
-        batchNumber,
-        addresses.pharmacy,
-        State.InPharmacy
-    );
+        const history = await DrugTracker.getDrugHistory(batchNumber);
+        if (history.includes(roles[step.to].address)) {
+            console.log(`   ↪ ${step.to} already received this batch, skipping.`);
+            continue;
+        }
 
-    // Transfer to Patient
-    console.log("👨‍⚕️ Step 5: Delivering to patient...");
-    await DrugTracker.connect(roles.pharmacy).transferDrug(
-        batchNumber,
-        addresses.patient,
-        State.Delivered
-    );
+        const tx = await DrugTracker.connect(roles[step.from]).transferDrug(
+            batchNumber,
+            roles[step.to].address,
+            step.state
+        );
+        await tx.wait();
+    }
 
     // Get drug info
     const info = await DrugTracker.getDrugInfo(batchNumber);

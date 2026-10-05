@@ -20,11 +20,20 @@ async function main() {
 
     console.log(`✅ DrugTracker deployed at: ${address}\n`);
 
+    // 🚚 CargoTracker needs the DrugTracker address
+    const CargoTracker = await hre.ethers.getContractFactory("CargoTracker");
+    const cargoContract = await CargoTracker.deploy(address);
+    await cargoContract.waitForDeployment();
+    const cargoAddress = await cargoContract.getAddress();
+
+    console.log(`🚚 CargoTracker deployed at: ${cargoAddress}\n`);
+
     // 🔐 Export backend/.env con las private keys
     const backendEnvPath = path.join(__dirname, "../backend/.env");
 
     const backendEnv = [
         `CONTRACT_ADDRESS=${address}`,
+        `CARGO_CONTRACT_ADDRESS=${cargoAddress}`,
         `RPC_URL=http://127.0.0.1:8545`,
         `MANUFACTURER_KEY=${process.env.MANUFACTURER_KEY}`,
         `DISTRIBUTOR_KEY=${process.env.DISTRIBUTOR_KEY}`,
@@ -51,10 +60,23 @@ async function main() {
 
     console.log("📦 ABI exported to frontend + backend ✅");
 
+    // ➕ CargoTracker ABI to frontend + backend
+    const cargoArtifact = await hre.artifacts.readArtifact("CargoTracker");
+    const cargoAbiJson = JSON.stringify({ abi: cargoArtifact.abi }, null, 2);
+
+    const frontendCargoAbiPath = path.join(__dirname, "../../PharmaTrace-UI/src/abi/CargoTracker.json");
+    fs.mkdirSync(path.dirname(frontendCargoAbiPath), { recursive: true });
+    fs.writeFileSync(frontendCargoAbiPath, cargoAbiJson);
+    fs.writeFileSync(path.join(__dirname, "./abi/CargoTracker.json"), cargoAbiJson);
+    console.log("📦 CargoTracker ABI exported to frontend + backend ✅");
+
     // ➕ Contract address to frontend
     const frontendAddressPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/contract-address.js");
     fs.mkdirSync(path.dirname(frontendAddressPath), { recursive: true });
-    fs.writeFileSync(frontendAddressPath, `export const CONTRACT_ADDRESS = "${address}";\n`);
+    fs.writeFileSync(
+        frontendAddressPath,
+        `export const CONTRACT_ADDRESS = "${address}";\nexport const CARGO_CONTRACT_ADDRESS = "${cargoAddress}";\n`
+    );
     console.log("📬 Contract address exported to frontend ✅");
 
     // ➕ Actor info to frontend

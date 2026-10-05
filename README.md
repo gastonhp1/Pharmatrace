@@ -56,7 +56,7 @@ PharmaTrace/
 ├── test/                   Tests de Hardhat de los contratos
 ├── scripts/                Deploy, interacción y exportación
 │   ├── abi/                ABIs, metadata y historial de despliegues
-│   └── helpers/            Balances y firmantes para los scripts
+│   └── helpers/            Balances, firmantes y carga de variables de entorno
 ├── backend/                API Node.js
 │   ├── routes/             Rutas de cargamentos
 │   ├── services/           Lógica con ethers (lotes, cargamentos, firmantes)
@@ -108,7 +108,7 @@ La clave del fabricante es la que despliega los contratos, así que queda como s
 npx hardhat node
 ```
 
-### 3. Desplegar `DrugTracker`
+### 3. Desplegar los contratos
 
 En otra terminal:
 
@@ -116,25 +116,24 @@ En otra terminal:
 npm run deploy:all
 ```
 
-Despliega el contrato y:
+Despliega `DrugTracker` y `CargoTracker` y:
 
-- escribe `backend/.env` con `CONTRACT_ADDRESS`, `RPC_URL` y las cinco claves;
-- exporta el ABI, la dirección y los datos de los actores a `../PharmaTrace-UI/src/`.
+- escribe `backend/.env` con `CONTRACT_ADDRESS`, `CARGO_CONTRACT_ADDRESS`, `RPC_URL` y las cinco claves;
+- exporta los ABIs, las direcciones y los datos de los actores a `../PharmaTrace-UI/src/`.
 
-### 4. Desplegar `CargoTracker` (opcional)
+Los scripts de `scripts/` leen sus variables del `.env` de la raíz y, si falta alguna, de
+`backend/.env`, así que después de este paso ya usan las direcciones sin copiarlas a mano.
 
-`deploy-cargo.js` lee `CONTRACT_ADDRESS` del `.env` de la raíz y escribe ahí mismo la dirección
-nueva, así que el paso es manual:
+Si solo necesitás volver a desplegar `CargoTracker`:
 
 ```bash
-# agregá CONTRACT_ADDRESS=<dirección del paso 3> al .env de la raíz
 npx hardhat run scripts/deploy-cargo.js --network localhost
-# copiá la línea CARGO_CONTRACT_ADDRESS=... que quedó en el .env de la raíz a backend/.env
 ```
 
-`npm run deploy:all` pisa `backend/.env`, así que si volvés a desplegar repetí este paso.
+Actualiza `CARGO_CONTRACT_ADDRESS` en el `.env` de la raíz y en `backend/.env` (si existe), sin
+duplicar la línea.
 
-### 5. Levantar el backend
+### 4. Levantar el backend
 
 ```bash
 cd backend
@@ -145,18 +144,16 @@ npm start
 Escucha en `http://localhost:3001` (o el `PORT` que definas). Hay una plantilla en
 `backend/.env.example`.
 
-### 6. Probar con un lote de ejemplo
+### 5. Probar con ejemplos
 
 ```bash
-npx hardhat run scripts/full-trace.js --network localhost
+node scripts/interact.js BATCH-001   # registra un lote y lo pasa por toda la cadena
+node scripts/traceDrug.js BATCH-001  # muestra su trazabilidad
+node scripts/cargo-interact.js       # crea un cargamento con 2 lotes, lo transfiere y lo entrega
 ```
 
-Registra un lote de prueba y lo pasa por toda la cadena hasta el paciente. Para ver su
-trazabilidad (con `CONTRACT_ADDRESS` en el `.env` de la raíz):
-
-```bash
-node scripts/traceDrug.js BATCH-<id impreso por el script anterior>
-```
+`interact.js` se puede volver a correr sobre el mismo lote: saltea lo que ya se hizo y sigue
+desde donde quedó. `cargo-interact.js` registra sus propios lotes.
 
 ## API
 
@@ -201,13 +198,13 @@ Errores (siempre `{"error": "<motivo>"}`):
 | Script | Cómo se corre | Qué hace |
 | --- | --- | --- |
 | `deploy.js` | `npm run deploy` | Despliega solo `DrugTracker` |
-| `deploy-to-env-and-frontend.js` | `npm run deploy:all` | Despliega y exporta `backend/.env` y los archivos del frontend |
-| `export-artifacts.js` | `npm run export:frontend` | Despliega `DrugTracker` y exporta ABIs, dirección, metadata e historial de despliegues |
-| `deploy-cargo.js` | `npx hardhat run scripts/deploy-cargo.js --network localhost` | Despliega `CargoTracker` |
-| `full-trace.js` | `npx hardhat run scripts/full-trace.js --network localhost` | Registra y transfiere un lote de prueba por toda la cadena |
+| `deploy-to-env-and-frontend.js` | `npm run deploy:all` | Despliega `DrugTracker` y `CargoTracker` y exporta `backend/.env`, ABIs y archivos del frontend |
+| `export-artifacts.js` | `npm run export:frontend` | Variante anterior de `deploy:all` (ver limitaciones): despliega solo `DrugTracker` y exporta ABIs, dirección, metadata e historial de despliegues |
+| `deploy-cargo.js` | `npx hardhat run scripts/deploy-cargo.js --network localhost` | Despliega solo `CargoTracker` y actualiza `CARGO_CONTRACT_ADDRESS` en los `.env` |
+| `full-trace.js` | `npx hardhat run scripts/full-trace.js --network localhost` | Registra y transfiere un lote de prueba por toda la cadena, con las cuentas de Hardhat |
 | `traceDrug.js` | `node scripts/traceDrug.js <BATCH>` | Imprime la trazabilidad de un lote existente |
-| `interact.js` | `node scripts/interact.js <BATCH>` | Desactualizado, ver más abajo |
-| `cargo-interact.js` | `node scripts/cargo-interact.js` | Desactualizado, ver más abajo |
+| `interact.js` | `node scripts/interact.js <BATCH>` | Registra un lote y lo pasa por toda la cadena hasta el paciente; se puede reanudar |
+| `cargo-interact.js` | `node scripts/cargo-interact.js` | Registra 2 lotes, crea un cargamento, lo transfiere por 3 actores y lo entrega |
 
 ## Limitaciones conocidas
 
@@ -232,11 +229,7 @@ Errores (siempre `{"error": "<motivo>"}`):
 
 **Scripts y despliegue**
 
-- `interact.js` falla con "Drug does not exist." al usar un lote nuevo: consulta el lote antes
-  de registrarlo y el contrato revierte si no existe.
-- `cargo-interact.js` quedó de una versión anterior de `CargoTracker`: usa
-  `CONTRACT_ADDRESS_CARGO` (el resto usa `CARGO_CONTRACT_ADDRESS`), `createCargo(id, descripción)`
-  y `getCargo`, que ya no existen.
-- El despliegue de `CargoTracker` no está integrado a `deploy:all` y requiere copiar variables
-  entre `.env` a mano.
+- `export-artifacts.js` (`npm run export:frontend`) es una variante anterior de `deploy:all`: no
+  despliega `CargoTracker` y reescribe `backend/.env` sin `CARGO_CONTRACT_ADDRESS`. Para el flujo
+  completo usá `deploy:all`.
 - Solo hay configuración para la red `localhost`.
