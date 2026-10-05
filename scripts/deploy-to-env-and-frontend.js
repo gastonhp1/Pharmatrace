@@ -2,6 +2,7 @@ require("./helpers/loadEnv");
 const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { deployAll } = require("./helpers/setupContracts");
 
 async function main() {
@@ -15,7 +16,11 @@ async function main() {
     // 🔐 Export backend/.env con las private keys
     const backendEnvPath = path.join(__dirname, "../backend/.env");
 
+    // Write endpoints need an API key: keep the one already set, otherwise generate one.
+    const apiKey = process.env.API_KEY || crypto.randomBytes(24).toString("hex");
+
     const backendEnv = [
+        `API_KEY=${apiKey}`,
         `CONTRACT_ADDRESS=${address}`,
         `CARGO_CONTRACT_ADDRESS=${cargoAddress}`,
         `RPC_URL=http://127.0.0.1:8545`,
@@ -27,7 +32,7 @@ async function main() {
     ];
 
     fs.writeFileSync(backendEnvPath, backendEnv.join("\n") + "\n");
-    console.log("🔐 backend/.env exported with private keys ✅");
+    console.log("🔐 backend/.env exported with private keys and API_KEY ✅");
 
     // 📤 ABI export
     const artifact = await hre.artifacts.readArtifact("DrugTracker");

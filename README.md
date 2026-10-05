@@ -96,7 +96,8 @@ npm test
 ```
 
 Los tests corren en la red en memoria de Hardhat, sin `.env`. Son 59, entre
-`DrugTracker` y `CargoTracker`.
+`DrugTracker` y `CargoTracker`. Los del backend (middleware de autenticación) corren con
+`cd backend && npm test`.
 
 ## Correr todo en local
 
@@ -173,6 +174,12 @@ desde donde quedó. `cargo-interact.js` registra sus propios lotes.
 
 ## API
 
+Las rutas de lectura (`GET`) son públicas. Las de escritura (`POST`) firman transacciones con las
+claves de los actores, así que exigen el header `x-api-key` con el valor de `API_KEY`
+(`deploy:all` genera uno en `backend/.env`; se muestra en ese archivo). Sin `API_KEY` configurada
+el servidor responde 503 a las escrituras, salvo que se defina `AUTH_DISABLED=true` (solo para
+desarrollo local). Sin la clave correcta responde 401.
+
 Cada operación sobre un lote o cargamento existente se firma con la clave del **dueño actual**:
 el backend consulta quién es en la blockchain y busca esa dirección entre las claves `*_KEY`
 configuradas. Si el dueño no tiene clave configurada, responde 403.
@@ -192,10 +199,12 @@ Ejemplo:
 
 ```bash
 curl -X POST localhost:3001/api/register \
+  -H "x-api-key: $API_KEY" \
   -H 'content-type: application/json' \
   -d '{"batchId":"B-100","drugName":"Ibuprofeno 400mg","manufacturer":"Laboratorio X"}'
 
 curl -X POST localhost:3001/api/transfer \
+  -H "x-api-key: $API_KEY" \
   -H 'content-type: application/json' \
   -d '{"batchId":"B-100","toAddress":"0x...distribuidor","newState":1}'
 ```
@@ -204,11 +213,13 @@ Errores (siempre `{"error": "<motivo>"}`):
 
 | Código | Cuándo |
 | --- | --- |
+| 401 | Falta el header `x-api-key` o es incorrecto (rutas `POST`) |
 | 400 | Datos inválidos (campo vacío, dirección mal formada, `newState` fuera de 0 a 5) o que no coincide con el rol del receptor; cargamento vacío o de más de 100 lotes |
 | 403 | No es el dueño actual, no es paciente (`mark-in-use`), o el dueño no tiene clave configurada |
 | 404 | El lote o cargamento no existe |
 | 409 | Ya existe, receptor con un rol que no es el siguiente, lote ya en un cargamento (o bloqueado en uno), cargamento ya entregado, o los lotes de un cargamento tienen distinto dueño |
 | 500 | Error inesperado (red caída, configuración incompleta) |
+| 503 | El servidor no tiene `API_KEY` configurada (rutas `POST`) |
 
 ## Scripts
 
@@ -227,9 +238,10 @@ Errores (siempre `{"error": "<motivo>"}`):
 
 **Seguridad**
 
-- La API no tiene autenticación y es custodial: quien llegue al servidor puede registrar lotes y
-  mover la custodia con las claves configuradas. Los "actores" son variables de entorno, no
-  entidades que firmen con su propia wallet.
+- La API usa una clave compartida (`x-api-key`) y es custodial: quien tenga la clave puede mover
+  la custodia con las claves de los actores. No identifica a cada actor ni lo hace firmar con su
+  propia wallet. Una clave de API embebida en un frontend público queda expuesta; la solución de
+  fondo es que cada actor firme en el navegador con su wallet.
 
 **Contratos**
 

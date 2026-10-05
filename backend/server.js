@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { traceDrug, registerDrug, transferDrug, markInUse } = require("./services/traceDrugService");
 const cargoRoutes = require("./routes/cargo");
+const { requireApiKey } = require("./middleware/auth");
 const { sendError } = require("./utils/errors");
 const { requireString, requireAddress, requireState } = require("./utils/validate");
 
@@ -11,6 +12,8 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+// Reads are public; anything that signs a transaction needs the x-api-key header.
+app.use("/api", requireApiKey());
 app.use("/api/cargo", cargoRoutes);
 
 app.get("/", (req, res) => {
@@ -68,6 +71,10 @@ app.post("/api/mark-in-use", async (req, res) => {
         sendError(res, err, "Error marking drug as in use");
     }
 });
+
+if (!process.env.API_KEY && process.env.AUTH_DISABLED !== "true") {
+    console.warn("⚠️  API_KEY is not set: write endpoints will answer 503 (set AUTH_DISABLED=true for local development).");
+}
 
 app.listen(PORT, () => {
     console.log(`✅ Backend running on http://localhost:${PORT}`);
