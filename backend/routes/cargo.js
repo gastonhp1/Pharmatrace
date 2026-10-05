@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { createCargo, getCargoInfo, transferCargo, markCargoDelivered } = require("../services/cargoService");
 const { sendError } = require("../utils/errors");
-const { requireString, requireAddress } = require("../utils/validate");
+const { requireString, requireAddress, requireState } = require("../utils/validate");
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim() !== "";
 
@@ -42,10 +42,11 @@ router.get("/:cargoId", async (req, res) => {
 // 🚚 Transferir un cargamento a otro actor
 router.post("/transfer", async (req, res) => {
     try {
-        const { cargoId, toAddress } = req.body || {};
+        const { cargoId, toAddress, newState } = req.body || {};
         const result = await transferCargo(
             requireString(cargoId, "cargoId"),
-            requireAddress(toAddress, "toAddress")
+            requireAddress(toAddress, "toAddress"),
+            requireState(newState)
         );
         res.json(result);
     } catch (err) {

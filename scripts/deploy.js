@@ -1,11 +1,17 @@
+require("./helpers/loadEnv");
 const hre = require("hardhat");
+const { deployAll } = require("./helpers/setupContracts");
 
+// Deploys DrugTracker and CargoTracker, registers the actors' roles and links both contracts.
 async function main() {
-    const DrugTracker = await hre.ethers.getContractFactory("DrugTracker");
-    const drugTracker = await DrugTracker.deploy(); // deploy and broadcast transaction
+    const { drugAddress, cargoAddress, addresses } = await deployAll(hre);
 
-    // ⚠️ NO usamos .deployed() en Ethers v6+
-    console.log("✅ DrugTracker deployed at:", await drugTracker.getAddress());
+    console.log("✅ DrugTracker deployed at:", drugAddress);
+    console.log("🚚 CargoTracker deployed at:", cargoAddress);
+    console.log("👥 Actors registered:");
+    for (const [name, address] of Object.entries(addresses)) {
+        console.log(`   ${name.padEnd(12)} ${address}`);
+    }
 }
 
 main().catch((error) => {

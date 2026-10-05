@@ -56,12 +56,14 @@ async function getCargoInfo(cargoId) {
 }
 
 // 🚚 Transferir cargamento a otro actor (signed by the cargo's current owner)
-async function transferCargo(cargoId, toAddress) {
+// The batches in it move with the cargo; newState is the state they take (it has to match the
+// receiver's role).
+async function transferCargo(cargoId, toAddress, newState) {
     const info = await CargoTracker.getCargoInfo(cargoId);
     const signer = getSignerForAddress(info[2]);
     const contract = CargoTracker.connect(signer);
 
-    const tx = await contract.transferCargo(cargoId, toAddress);
+    const tx = await contract.transferCargo(cargoId, toAddress, newState);
     await tx.wait();
 
     return {

@@ -23,30 +23,45 @@ El proyecto tiene tres partes:
 Fabricante (`manufacturer`), distribuidor (`distributor`), depósito (`warehouse`), farmacia
 (`pharmacy`) y paciente (`patient`). Cada uno es una cuenta Ethereum.
 
-### Estados de un lote
+### Estados de un lote y cadena de custodia
 
-| Valor | Estado | En el flujo de ejemplo (`scripts/full-trace.js`) |
+Cada actor tiene un **rol** registrado on-chain, y un lote solo puede pasar al rol siguiente de
+la cadena. El estado que toma el lote lo define el rol del receptor:
+
+| Valor | Estado | Cómo se llega |
 | --- | --- | --- |
 | 0 | `Registered` | El fabricante registra el lote |
-| 1 | `InDistribution` | Pasa del fabricante al distribuidor |
-| 2 | `InTransit` | Del distribuidor al depósito |
-| 3 | `InPharmacy` | Del depósito a la farmacia |
-| 4 | `Delivered` | De la farmacia al paciente |
-| 5 | `InUse` | Último estado posible |
+| 1 | `InDistribution` | Fabricante → distribuidor |
+| 2 | `InTransit` | Distribuidor → depósito |
+| 3 | `InPharmacy` | Depósito → farmacia |
+| 4 | `Delivered` | Farmacia → paciente |
+| 5 | `InUse` | El paciente llama a `markInUse` |
 
 ### Reglas de `DrugTracker`
 
-- Solo el dueño del contrato (quien lo despliega, el fabricante) puede registrar lotes.
+- El dueño del contrato (quien lo despliega) es el fabricante y el único que puede registrar
+  lotes y dar roles a los demás con `registerActor(address, role)`.
 - Solo el dueño actual de un lote puede transferirlo, y cada transferencia agrega al nuevo dueño
   al historial (`getDrugHistory`).
-- El estado solo puede avanzar: el nuevo estado tiene que ser mayor que el actual.
+- El destinatario tiene que tener el rol siguiente al del que transfiere (no se saltean pasos ni
+  se retrocede) y `newState` tiene que coincidir con ese rol; si no, la transacción revierte.
+- `markInUse` solo lo puede hacer un paciente que sea dueño de un lote `Delivered`.
+- Mientras un lote viaja en un cargamento (`inCargo`) no se puede transferir por fuera.
+- `setCargoTracker` apunta el contrato a su `CargoTracker`, el único que puede bloquear,
+  desbloquear y mover lotes de un cargamento. `forceUnlock` (solo el dueño) libera un lote que
+  quedó bloqueado por un `CargoTracker` reemplazado.
 
 ### Reglas de `CargoTracker`
 
-- Se despliega apuntando a la dirección de un `DrugTracker`.
-- `createCargo` exige que quien lo crea sea dueño de todos los lotes que incluye.
-- El cargamento tiene su propio dueño: se transfiere con `transferCargo` y se cierra con
-  `markDelivered`, ambos solo por el dueño actual del cargamento.
+- Se despliega apuntando a un `DrugTracker`, que a su vez tiene que apuntarle con
+  `setCargoTracker` (los scripts de deploy lo hacen).
+- `createCargo` exige al menos un lote y un máximo de 100; quien lo crea tiene que ser dueño de
+  todos, y un lote no puede estar en dos cargamentos ni repetido.
+- `transferCargo(cargoId, to, newState)` mueve el cargamento **y todos sus lotes** juntos, con las
+  mismas reglas de rol y estado de `DrugTracker`. Si un lote falla, no se mueve nada.
+- `markDelivered` cierra el cargamento (una sola vez, emite `CargoDelivered`) y desbloquea los
+  lotes, que quedan con el dueño actual y siguen la cadena de a uno. Un cargamento entregado no
+  se puede transferir.
 
 ## Estructura
 
@@ -80,10 +95,8 @@ npm run compile
 npm test
 ```
 
-Los tests corren en la red en memoria de Hardhat, sin `.env`. Son 37, entre
-`DrugTracker` y `CargoTracker`. Los que empiezan con `KNOWN ISSUE` fijan un comportamiento
-actual que conviene corregir (ver [Limitaciones conocidas](#limitaciones-conocidas)): cuando se
-arregle el contrato hay que invertir sus asserts.
+Los tests corren en la red en memoria de Hardhat, sin `.env`. Son 59, entre
+`DrugTracker` y `CargoTracker`.
 
 ## Correr todo en local
 
@@ -100,7 +113,8 @@ PHARMACY_KEY=0x...
 PATIENT_KEY=0x...
 ```
 
-La clave del fabricante es la que despliega los contratos, así que queda como su dueño.
+La clave del fabricante tiene que ser la de la primera cuenta de la red: es la que despliega
+los contratos, así que queda como su dueño y como fabricante.
 
 ### 2. Levantar la red local
 
@@ -116,7 +130,8 @@ En otra terminal:
 npm run deploy:all
 ```
 
-Despliega `DrugTracker` y `CargoTracker` y:
+Despliega `DrugTracker` y `CargoTracker`, registra el rol de cada actor (las direcciones salen
+de las `*_KEY`), vincula ambos contratos con `setCargoTracker` y:
 
 - escribe `backend/.env` con `CONTRACT_ADDRESS`, `CARGO_CONTRACT_ADDRESS`, `RPC_URL` y las cinco claves;
 - exporta los ABIs, las direcciones y los datos de los actores a `../PharmaTrace-UI/src/`.
@@ -124,7 +139,8 @@ Despliega `DrugTracker` y `CargoTracker` y:
 Los scripts de `scripts/` leen sus variables del `.env` de la raíz y, si falta alguna, de
 `backend/.env`, así que después de este paso ya usan las direcciones sin copiarlas a mano.
 
-Si solo necesitás volver a desplegar `CargoTracker`:
+Si solo necesitás volver a desplegar `CargoTracker` (también se lo vincula al `DrugTracker`;
+los lotes que seguían bloqueados en el anterior se liberan con `forceUnlock`):
 
 ```bash
 npx hardhat run scripts/deploy-cargo.js --network localhost
@@ -149,7 +165,7 @@ Escucha en `http://localhost:3001` (o el `PORT` que definas). Hay una plantilla 
 ```bash
 node scripts/interact.js BATCH-001   # registra un lote y lo pasa por toda la cadena
 node scripts/traceDrug.js BATCH-001  # muestra su trazabilidad
-node scripts/cargo-interact.js       # crea un cargamento con 2 lotes, lo transfiere y lo entrega
+node scripts/cargo-interact.js       # crea un cargamento con 2 lotes, lo transfiere (los lotes lo siguen) y lo entrega
 ```
 
 `interact.js` se puede volver a correr sobre el mismo lote: saltea lo que ya se hizo y sigue
@@ -163,12 +179,13 @@ configuradas. Si el dueño no tiene clave configurada, responde 403.
 
 | Método | Ruta | Body |
 | --- | --- | --- |
-| GET | `/api/drug/:batchId` | |
+| GET | `/api/drug/:batchId` | (la respuesta incluye `inCargo`) |
 | POST | `/api/register` | `batchId`, `drugName`, `manufacturer` |
-| POST | `/api/transfer` | `batchId`, `toAddress`, `newState` (0 a 5) |
+| POST | `/api/transfer` | `batchId`, `toAddress`, `newState` (el que corresponde al rol del receptor, 1 a 4) |
+| POST | `/api/mark-in-use` | `batchId` (lo firma el paciente dueño del lote) |
 | POST | `/api/cargo/create` | `cargoId`, `batchIds[]` |
 | GET | `/api/cargo/:cargoId` | |
-| POST | `/api/cargo/transfer` | `cargoId`, `toAddress` |
+| POST | `/api/cargo/transfer` | `cargoId`, `toAddress`, `newState` (se aplica a todos sus lotes) |
 | POST | `/api/cargo/deliver` | `cargoId` |
 
 Ejemplo:
@@ -187,20 +204,20 @@ Errores (siempre `{"error": "<motivo>"}`):
 
 | Código | Cuándo |
 | --- | --- |
-| 400 | Datos inválidos (campo vacío, dirección mal formada, `newState` fuera de 0 a 5) |
-| 403 | No es el dueño actual, o el dueño no tiene clave configurada |
+| 400 | Datos inválidos (campo vacío, dirección mal formada, `newState` fuera de 0 a 5) o que no coincide con el rol del receptor; cargamento vacío o de más de 100 lotes |
+| 403 | No es el dueño actual, no es paciente (`mark-in-use`), o el dueño no tiene clave configurada |
 | 404 | El lote o cargamento no existe |
-| 409 | Ya existe, transición de estado inválida, o los lotes de un cargamento tienen distinto dueño |
+| 409 | Ya existe, receptor con un rol que no es el siguiente, lote ya en un cargamento (o bloqueado en uno), cargamento ya entregado, o los lotes de un cargamento tienen distinto dueño |
 | 500 | Error inesperado (red caída, configuración incompleta) |
 
 ## Scripts
 
 | Script | Cómo se corre | Qué hace |
 | --- | --- | --- |
-| `deploy.js` | `npm run deploy` | Despliega solo `DrugTracker` |
+| `deploy.js` | `npm run deploy` | Despliega `DrugTracker` y `CargoTracker`, registra los roles y los vincula |
 | `deploy-to-env-and-frontend.js` | `npm run deploy:all` | Despliega `DrugTracker` y `CargoTracker` y exporta `backend/.env`, ABIs y archivos del frontend |
-| `export-artifacts.js` | `npm run export:frontend` | Variante anterior de `deploy:all` (ver limitaciones): despliega solo `DrugTracker` y exporta ABIs, dirección, metadata e historial de despliegues |
-| `deploy-cargo.js` | `npx hardhat run scripts/deploy-cargo.js --network localhost` | Despliega solo `CargoTracker` y actualiza `CARGO_CONTRACT_ADDRESS` en los `.env` |
+| `export-artifacts.js` | `npm run export:frontend` | Variante de `deploy:all` que además guarda metadata e historial de despliegues y escribe `.env.public` para Vite |
+| `deploy-cargo.js` | `npx hardhat run scripts/deploy-cargo.js --network localhost` | Despliega solo `CargoTracker`, lo vincula al `DrugTracker` y actualiza `CARGO_CONTRACT_ADDRESS` en los `.env` |
 | `full-trace.js` | `npx hardhat run scripts/full-trace.js --network localhost` | Registra y transfiere un lote de prueba por toda la cadena, con las cuentas de Hardhat |
 | `traceDrug.js` | `node scripts/traceDrug.js <BATCH>` | Imprime la trazabilidad de un lote existente |
 | `interact.js` | `node scripts/interact.js <BATCH>` | Registra un lote y lo pasa por toda la cadena hasta el paciente; se puede reanudar |
@@ -216,20 +233,14 @@ Errores (siempre `{"error": "<motivo>"}`):
 
 **Contratos**
 
-- `CargoTracker` y `DrugTracker` llevan la propiedad por separado. Transferir un cargamento no
-  mueve los lotes que contiene; un mismo lote puede estar en varios cargamentos a la vez o
-  transferirse por fuera mientras sigue en uno.
-- El estado de un lote solo tiene que aumentar: se pueden saltear estados (de `Registered` a
-  `InUse`) y el destinatario puede ser cualquier dirección, sin importar su rol. No hay registro
-  de roles on-chain.
-- Un cargamento entregado se puede seguir transfiriendo (incluso a la dirección cero),
-  `markDelivered` no emite evento y se puede llamar varias veces.
+- La cadena es fija (fabricante → distribuidor → depósito → farmacia → paciente): no hay otro
+  recorrido posible ni devoluciones.
+- Los roles los asigna el dueño del contrato; no hay forma de quitarlos salvo reasignarlos.
+- Un cargamento no se puede dividir ni modificar una vez creado, y `CargoTracker` no guarda
+  historial propio (se reconstruye con los eventos `CargoTransferred`).
 - Los números de lote son `string`, y en los eventos están indexados: el log guarda su hash, no
   se puede leer el valor original.
 
 **Scripts y despliegue**
 
-- `export-artifacts.js` (`npm run export:frontend`) es una variante anterior de `deploy:all`: no
-  despliega `CargoTracker` y reescribe `backend/.env` sin `CARGO_CONTRACT_ADDRESS`. Para el flujo
-  completo usá `deploy:all`.
 - Solo hay configuración para la red `localhost`.

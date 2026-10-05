@@ -63,14 +63,14 @@ async function main() {
 
     // 🔁 Transferencias
     const steps = [
-        { from: roles.origin, to: roles.transport1, name: "Transport Company" },
-        { from: roles.transport1, to: roles.warehouse, name: "Central Warehouse" },
-        { from: roles.warehouse, to: roles.pharmacy, name: "Pharmacy" },
+        { from: roles.origin, to: roles.transport1, name: "Transport Company", state: 1 },
+        { from: roles.transport1, to: roles.warehouse, name: "Central Warehouse", state: 2 },
+        { from: roles.warehouse, to: roles.pharmacy, name: "Pharmacy", state: 3 },
     ];
 
     for (const step of steps) {
         console.log(`🚚 Transferring cargo to ${step.name} (${step.to.address})`);
-        const tx = await CargoTracker.connect(step.from).transferCargo(cargoId, step.to.address);
+        const tx = await CargoTracker.connect(step.from).transferCargo(cargoId, step.to.address, step.state);
         await tx.wait();
     }
 
@@ -99,11 +99,16 @@ async function main() {
             console.log(`  ${i + 1}. ${roleOf(event.args.from)} → ${roleOf(event.args.to)}`);
         });
 
-    // Cargo and batch ownership are tracked separately: transferring a cargo does not move its batches.
-    console.log("\nℹ️  Batch owners in DrugTracker (unchanged by cargo transfers):");
+    // Transferring a cargo moves its batches too; delivering it unlocks them.
+    const stateNames = ["Registered", "InDistribution", "InTransit", "InPharmacy", "Delivered", "InUse"];
+    console.log("\nℹ️  Batches in DrugTracker (they follow the cargo):");
     for (const batch of batches) {
         const drug = await DrugTracker.getDrugInfo(batch.id);
-        console.log(`  ${batch.id}: ${drug.currentOwner} (${roleOf(drug.currentOwner)})`);
+        const locked = await DrugTracker.inCargo(batch.id);
+        console.log(
+            `  ${batch.id}: ${drug.currentOwner} (${roleOf(drug.currentOwner)}), ` +
+                `${stateNames[Number(drug.currentState)]}, ${locked ? "locked in cargo" : "free"}`
+        );
     }
 }
 

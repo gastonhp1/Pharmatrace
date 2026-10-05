@@ -46,6 +46,25 @@
           "type": "string"
         },
         {
+          "indexed": true,
+          "internalType": "address",
+          "name": "by",
+          "type": "address"
+        }
+      ],
+      "name": "CargoDelivered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
           "indexed": false,
           "internalType": "address",
           "name": "from",
@@ -60,6 +79,19 @@
       ],
       "name": "CargoTransferred",
       "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "MAX_BATCHES_PER_CARGO",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
       "inputs": [
@@ -155,6 +187,11 @@
           "internalType": "address",
           "name": "to",
           "type": "address"
+        },
+        {
+          "internalType": "uint8",
+          "name": "newState",
+          "type": "uint8"
         }
       ],
       "name": "transferCargo",
