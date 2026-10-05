@@ -3,6 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const { traceDrug, registerDrug, transferDrug } = require("./services/traceDrugService");
 const cargoRoutes = require("./routes/cargo");
+const { sendError } = require("./utils/errors");
+const { requireString, requireAddress, requireState } = require("./utils/validate");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -22,32 +24,37 @@ app.get("/api/drug/:batchId", async (req, res) => {
         const result = await traceDrug(batchId);
         res.json(result);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error tracing drug batch" });
+        sendError(res, err, "Error tracing drug batch");
     }
 });
 
 // 📝 Registrar un nuevo batch de droga
 app.post("/api/register", async (req, res) => {
     try {
-        const { batchId, drugName, manufacturer } = req.body;
-        const result = await registerDrug(batchId, drugName, manufacturer);
+        const { batchId, drugName, manufacturer } = req.body || {};
+        const result = await registerDrug(
+            requireString(batchId, "batchId"),
+            requireString(drugName, "drugName"),
+            requireString(manufacturer, "manufacturer")
+        );
         res.json(result);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error registering drug" });
+        sendError(res, err, "Error registering drug");
     }
 });
 
 // 📦 Transferir droga a otro actor
 app.post("/api/transfer", async (req, res) => {
     try {
-        const { batchId, toAddress, newState } = req.body;
-        const result = await transferDrug(batchId, toAddress, newState);
+        const { batchId, toAddress, newState } = req.body || {};
+        const result = await transferDrug(
+            requireString(batchId, "batchId"),
+            requireAddress(toAddress, "toAddress"),
+            requireState(newState)
+        );
         res.json(result);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error transferring drug" });
+        sendError(res, err, "Error transferring drug");
     }
 });
 

@@ -1,15 +1,33 @@
 require("dotenv").config();
 const { ethers } = require("ethers");
 const contractJson = require("../../scripts/abi/CargoTracker.json");
+const drugContractJson = require("../../scripts/abi/DrugTracker.json");
+const { provider, getSignerForAddress } = require("./chain");
+const { ApiError } = require("../utils/errors");
 
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 const contractAddress = process.env.CARGO_CONTRACT_ADDRESS;
 
 const CargoTracker = new ethers.Contract(contractAddress, contractJson.abi, provider);
 
 // 🆕 Crear cargamento
+// The contract requires the sender to own every batch in the cargo, so the transaction
+// is signed with the key of the batches' current owner.
 async function createCargo(cargoId, batchIds) {
-    const signer = new ethers.Wallet(process.env.MANUFACTURER_KEY, provider);
+    const drugTracker = new ethers.Contract(
+        await CargoTracker.drugContract(),
+        drugContractJson.abi,
+        provider
+    );
+
+    const owners = await Promise.all(
+        batchIds.map(async (batchId) => (await drugTracker.getDrugInfo(batchId))[4])
+    );
+
+    if (new Set(owners.map((owner) => owner.toLowerCase())).size !== 1) {
+        throw new ApiError(409, "All batches in a cargo must have the same current owner");
+    }
+
+    const signer = getSignerForAddress(owners[0]);
     const contract = CargoTracker.connect(signer);
 
     const tx = await contract.createCargo(cargoId, batchIds);
@@ -37,9 +55,25 @@ async function getCargoInfo(cargoId) {
     };
 }
 
-// ✅ Marcar cargamento como entregado
+// 🚚 Transferir cargamento a otro actor (signed by the cargo's current owner)
+async function transferCargo(cargoId, toAddress) {
+    const info = await CargoTracker.getCargoInfo(cargoId);
+    const signer = getSignerForAddress(info[2]);
+    const contract = CargoTracker.connect(signer);
+
+    const tx = await contract.transferCargo(cargoId, toAddress);
+    await tx.wait();
+
+    return {
+        ok: true,
+        message: `Cargo ${cargoId} transferred to ${toAddress}`
+    };
+}
+
+// ✅ Marcar cargamento como entregado (signed by the cargo's current owner)
 async function markCargoDelivered(cargoId) {
-    const signer = new ethers.Wallet(process.env.DISTRIBUTOR_KEY, provider);
+    const info = await CargoTracker.getCargoInfo(cargoId);
+    const signer = getSignerForAddress(info[2]);
     const contract = CargoTracker.connect(signer);
 
     const tx = await contract.markDelivered(cargoId);
@@ -54,5 +88,6 @@ async function markCargoDelivered(cargoId) {
 module.exports = {
     createCargo,
     getCargoInfo,
+    transferCargo,
     markCargoDelivered
 };

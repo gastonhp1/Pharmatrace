@@ -50,6 +50,16 @@ async function main() {
 
     console.log("📦 ABI exported to frontend + backend ✅");
 
+    // 📦 CargoTracker ABI (frontend + backend)
+    const cargoArtifact = await hre.artifacts.readArtifact("CargoTracker");
+    const cargoAbiJson = JSON.stringify({ abi: cargoArtifact.abi }, null, 2);
+
+    const frontendCargoAbiPath = path.join(__dirname, "../../PharmaTrace-UI/src/abi/CargoTracker.json");
+    fs.mkdirSync(path.dirname(frontendCargoAbiPath), { recursive: true });
+    fs.writeFileSync(frontendCargoAbiPath, cargoAbiJson);
+    fs.writeFileSync(path.join(__dirname, "./abi/CargoTracker.json"), cargoAbiJson);
+    console.log("📦 CargoTracker ABI exported to frontend + backend ✅");
+
     // ➕ Contract address to frontend
     const frontendAddressPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/contract-address.js");
     fs.mkdirSync(path.dirname(frontendAddressPath), { recursive: true });
@@ -98,13 +108,6 @@ async function main() {
     fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
     console.log("🗂️  Deploy history updated ✅");
 }
-
-    // 📦 Export CargoTracker ABI
-    const cargoArtifact = await hre.artifacts.readArtifact("CargoTracker");
-    const frontendCargoAbiPath = path.join(__dirname, "../../Pharmatrace-UI/src/abi/CargoTracker.json");
-    fs.mkdirSync(path.dirname(frontendCargoAbiPath), { recursive: true });
-    fs.writeFileSync(frontendCargoAbiPath, JSON.stringify({ abi: cargoArtifact.abi }, null, 2));
-    console.log("📦 CargoTracker ABI exported to frontend ✅");
 
 main().catch((err) => {
     console.error("❌ Error:", err);
