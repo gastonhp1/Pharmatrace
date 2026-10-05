@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { traceDrug, registerDrug, transferDrug } = require("./services/traceDrugService");
+const { traceDrug, registerDrug, transferDrug, markInUse } = require("./services/traceDrugService");
 const cargoRoutes = require("./routes/cargo");
 const { sendError } = require("./utils/errors");
 const { requireString, requireAddress, requireState } = require("./utils/validate");
@@ -55,6 +55,17 @@ app.post("/api/transfer", async (req, res) => {
         res.json(result);
     } catch (err) {
         sendError(res, err, "Error transferring drug");
+    }
+});
+
+// 💊 Marcar un batch entregado como en uso (lo hace el paciente)
+app.post("/api/mark-in-use", async (req, res) => {
+    try {
+        const { batchId } = req.body || {};
+        const result = await markInUse(requireString(batchId, "batchId"));
+        res.json(result);
+    } catch (err) {
+        sendError(res, err, "Error marking drug as in use");
     }
 });
 

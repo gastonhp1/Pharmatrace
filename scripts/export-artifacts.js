@@ -1,29 +1,20 @@
-require("dotenv").config();
+require("./helpers/loadEnv");
 const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
+const { deployAll } = require("./helpers/setupContracts");
 
 async function main() {
-    const signers = await hre.ethers.getSigners();
+    const { drugAddress: address, cargoAddress, signers } = await deployAll(hre);
 
-    const roles = {
-        manufacturer: signers[0],
-        distributor: signers[1],
-        warehouse: signers[2],
-        pharmacy: signers[3],
-        patient: signers[4],
-    };
-
-    const DrugTracker = await hre.ethers.getContractFactory("DrugTracker");
-    const contract = await DrugTracker.deploy();
-    const address = await contract.getAddress();
-
-    console.log(`✅ DrugTracker deployed at: ${address}\n`);
+    console.log(`✅ DrugTracker deployed at: ${address}`);
+    console.log(`🚚 CargoTracker deployed at: ${cargoAddress}\n`);
 
     // 📄 .env backend
     const envLines = [
         `CONTRACT_ADDRESS=${address}`,
-        `RPC_URL=${process.env.RPC_URL}`,
+        `CARGO_CONTRACT_ADDRESS=${cargoAddress}`,
+        `RPC_URL=${process.env.RPC_URL || "http://127.0.0.1:8545"}`,
         `MANUFACTURER_KEY=${process.env.MANUFACTURER_KEY}`,
         `DISTRIBUTOR_KEY=${process.env.DISTRIBUTOR_KEY}`,
         `WAREHOUSE_KEY=${process.env.WAREHOUSE_KEY}`,
@@ -63,14 +54,15 @@ async function main() {
     // ➕ Contract address to frontend
     const frontendAddressPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/contract-address.js");
     fs.mkdirSync(path.dirname(frontendAddressPath), { recursive: true });
-    fs.writeFileSync(frontendAddressPath, `export const CONTRACT_ADDRESS = "${address}";\n`);
+    fs.writeFileSync(frontendAddressPath, `export const CONTRACT_ADDRESS = "${address}";\nexport const CARGO_CONTRACT_ADDRESS = "${cargoAddress}";\n`);
     console.log("📬 Contract address exported to frontend ✅");
 
     // 🌐 .env.public para Vite frontend
     const publicEnvPath = path.join(__dirname, "../../PharmaTrace-UI/.env.public");
     const publicEnv = [
         `VITE_CONTRACT_ADDRESS=${address}`,
-        `VITE_RPC_URL=${process.env.RPC_URL}`
+        `VITE_CARGO_CONTRACT_ADDRESS=${cargoAddress}`,
+        `VITE_RPC_URL=${process.env.RPC_URL || "http://127.0.0.1:8545"}`
     ];
 
     fs.writeFileSync(publicEnvPath, publicEnv.join("\n") + "\n");
@@ -83,6 +75,7 @@ async function main() {
     const metadata = {
         contract: "DrugTracker",
         address,
+        cargoAddress,
         network,
         blockNumber,
         exportedAt: new Date().toISOString()

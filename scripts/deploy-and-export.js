@@ -1,14 +1,14 @@
-require("dotenv").config();
+require("./helpers/loadEnv");
 const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
+const { deployAll } = require("./helpers/setupContracts");
 
 async function main() {
-    const DrugTracker = await hre.ethers.getContractFactory("DrugTracker");
-    const contract = await DrugTracker.deploy();
-    const address = await contract.getAddress();
+    const { drugAddress: address, cargoAddress } = await deployAll(hre);
 
     console.log(`✅ DrugTracker deployed at: ${address}`);
+    console.log(`🚚 CargoTracker deployed at: ${cargoAddress}`);
 
     // 📂 Exportar ABI al frontend
     const contractArtifact = await hre.artifacts.readArtifact("DrugTracker");
@@ -21,7 +21,7 @@ async function main() {
     // 📍 Exportar address al frontend
     const addressOutputPath = path.join(__dirname, "../../PharmaTrace-UI/src/config/contract-address.js");
     fs.mkdirSync(path.dirname(addressOutputPath), { recursive: true });
-    fs.writeFileSync(addressOutputPath, `export const CONTRACT_ADDRESS = "${address}";\n`);
+    fs.writeFileSync(addressOutputPath, `export const CONTRACT_ADDRESS = "${address}";\nexport const CARGO_CONTRACT_ADDRESS = "${cargoAddress}";\n`);
     console.log("📬 Contract address exported to frontend ✅");
 }
 

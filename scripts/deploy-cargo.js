@@ -17,6 +17,16 @@ async function main() {
     const cargoAddress = await cargoContract.getAddress();
     console.log(`🚚 CargoTracker deployed at: ${cargoAddress}`);
 
+    // DrugTracker only lets its registered cargo tracker lock and move batches. This has to be
+    // sent by the DrugTracker owner (the first account).
+    const drugTracker = await hre.ethers.getContractAt("DrugTracker", drugTrackerAddress);
+    await (await drugTracker.setCargoTracker(cargoAddress)).wait();
+    console.log("🔗 DrugTracker now points to the new CargoTracker ✅");
+    console.log(
+        "⚠️  Batches locked in cargos of the previous CargoTracker stay locked: " +
+            "the owner can release them with DrugTracker.forceUnlock(batchId)."
+    );
+
     // Keep both env files in sync: the root .env (scripts) and backend/.env (API), if it exists.
     const rootEnvPath = path.join(__dirname, "../.env");
     const backendEnvPath = path.join(__dirname, "../backend/.env");

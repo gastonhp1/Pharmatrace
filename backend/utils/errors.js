@@ -15,6 +15,14 @@ const REVERT_STATUS = {
     "Drug already registered.": 409,
     "Invalid state transition.": 409,
     "Invalid recipient address.": 400,
+    "Invalid recipient role": 409,
+    "State does not match recipient role": 400,
+    "Drug is in a cargo": 409,
+    "Drug is already in a cargo": 409,
+    "Drug is not in a cargo": 409,
+    "Drug must be delivered first": 409,
+    "Only patients can mark a drug as in use": 403,
+    "Only the cargo tracker can perform this action.": 403,
     // CargoTracker
     "Cargo not found": 404,
     "Cargo does not exist": 404,
@@ -22,6 +30,9 @@ const REVERT_STATUS = {
     "Only current owner can mark delivered": 403,
     "Sender does not own all drugs": 403,
     "Cargo already exists": 409,
+    "Cargo already delivered": 409,
+    "Cargo must have at least one drug": 400,
+    "Too many drugs in a cargo": 400,
 };
 
 function revertReason(err) {

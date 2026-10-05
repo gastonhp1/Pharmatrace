@@ -1,32 +1,16 @@
-require("dotenv").config();
+require("./helpers/loadEnv");
 const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
+const { deployAll } = require("./helpers/setupContracts");
 
 async function main() {
-    const signers = await hre.ethers.getSigners();
-
-    const roles = {
-        laboratory: signers[0],
-        distributor: signers[1],
-        warehouse: signers[2],
-        pharmacy: signers[3],
-        patient: signers[4],
-    };
-
-    const DrugTracker = await hre.ethers.getContractFactory("DrugTracker");
-    const contract = await DrugTracker.deploy();
-    const address = await contract.getAddress();
+    // Deploys both contracts, registers the actors' roles and links the cargo tracker.
+    const { drugAddress: address, cargoAddress, addresses } = await deployAll(hre);
 
     console.log(`✅ DrugTracker deployed at: ${address}\n`);
-
-    // 🚚 CargoTracker needs the DrugTracker address
-    const CargoTracker = await hre.ethers.getContractFactory("CargoTracker");
-    const cargoContract = await CargoTracker.deploy(address);
-    await cargoContract.waitForDeployment();
-    const cargoAddress = await cargoContract.getAddress();
-
     console.log(`🚚 CargoTracker deployed at: ${cargoAddress}\n`);
+    console.log("👥 Actor roles registered and CargoTracker linked ✅\n");
 
     // 🔐 Export backend/.env con las private keys
     const backendEnvPath = path.join(__dirname, "../backend/.env");
@@ -81,10 +65,10 @@ async function main() {
 
     // ➕ Actor info to frontend
     const actorData = {};
-    for (const [role, signer] of Object.entries(roles)) {
-        const balance = await signer.provider.getBalance(signer.address);
+    for (const [role, actorAddress] of Object.entries(addresses)) {
+        const balance = await hre.ethers.provider.getBalance(actorAddress);
         actorData[role] = {
-            address: signer.address,
+            address: actorAddress,
             balance: hre.ethers.formatEther(balance),
         };
     }

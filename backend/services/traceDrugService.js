@@ -11,6 +11,7 @@ const DrugTracker = new ethers.Contract(contractAddress, contractJson.abi, provi
 async function traceDrug(batchId) {
     const info = await DrugTracker.getDrugInfo(batchId);
     const history = await DrugTracker.getDrugHistory(batchId);
+    const inCargo = await DrugTracker.inCargo(batchId);
 
     const productionTimestamp = Number(info[2]);
     const stateLabels = [
@@ -28,6 +29,7 @@ async function traceDrug(batchId) {
         productionDate: new Date(productionTimestamp * 1000).toLocaleDateString(),
         currentState: stateLabels[info[3]] || "Unknown",
         currentOwner: info[4],
+        inCargo,
         history
     };
 }
@@ -58,4 +60,16 @@ async function transferDrug(batchId, toAddress, newState) {
     return { success: true, message: "Drug transferred successfully." };
 }
 
-module.exports = { traceDrug, registerDrug, transferDrug };
+// 💊 The patient marks a delivered batch as in use (signed with the owner's key)
+async function markInUse(batchId) {
+    const info = await DrugTracker.getDrugInfo(batchId);
+    const signer = getSignerForAddress(info[4]);
+    const contractWithSigner = DrugTracker.connect(signer);
+
+    const tx = await contractWithSigner.markInUse(batchId);
+    await tx.wait();
+
+    return { success: true, message: "Drug marked as in use." };
+}
+
+module.exports = { traceDrug, registerDrug, transferDrug, markInUse };
