@@ -1,8 +1,8 @@
 require("dotenv").config();
 const { ethers } = require("ethers");
 const contractJson = require("../../scripts/abi/DrugTracker.json");
+const { provider, getManufacturerSigner, getSignerForAddress } = require("./chain");
 
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 const contractAddress = process.env.CONTRACT_ADDRESS;
 
 const DrugTracker = new ethers.Contract(contractAddress, contractJson.abi, provider);
@@ -34,7 +34,7 @@ async function traceDrug(batchId) {
 
 // 📌 Registrar una droga
 async function registerDrug(batchId, drugName, manufacturer) {
-    const signer = new ethers.Wallet(process.env.MANUFACTURER_KEY, provider);
+    const signer = getManufacturerSigner();
     const contractWithSigner = DrugTracker.connect(signer);
 
     const productionDate = Math.floor(Date.now() / 1000);
@@ -45,8 +45,11 @@ async function registerDrug(batchId, drugName, manufacturer) {
 }
 
 // 📦 Transferir droga a otro actor
+// Only the current owner can transfer a batch, so the transaction is signed with the
+// owner's key (looked up on-chain) instead of a fixed role.
 async function transferDrug(batchId, toAddress, newState) {
-    const signer = new ethers.Wallet(process.env.DISTRIBUTOR_KEY, provider);
+    const info = await DrugTracker.getDrugInfo(batchId);
+    const signer = getSignerForAddress(info[4]);
     const contractWithSigner = DrugTracker.connect(signer);
 
     const tx = await contractWithSigner.transferDrug(batchId, toAddress, newState);
