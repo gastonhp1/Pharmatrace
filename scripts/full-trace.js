@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("./helpers/loadEnv");
 const { ethers } = require("hardhat");
 const { getSmartSigners } = require("./helpers/getSmartSigners");
 const { checkBalances } = require("./helpers/checkBalances");

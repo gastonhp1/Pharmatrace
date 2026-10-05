@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("./helpers/loadEnv");
 const { ethers } = require("ethers");
 const fs = require("fs");
 const contractJson = require("./abi/DrugTracker.json");
