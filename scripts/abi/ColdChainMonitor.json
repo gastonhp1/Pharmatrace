@@ -1,0 +1,595 @@
+{
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_devices",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "_cargoTracker",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "reason",
+          "type": "string"
+        }
+      ],
+      "name": "CargoCompromised",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum ColdChainMonitor.EventKind",
+          "name": "kind",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "payloadHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "DeviceEvent",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "minTemp",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "maxTemp",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "excursionSeconds",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "totalExcursionSeconds",
+          "type": "uint64"
+        }
+      ],
+      "name": "ExcursionRecorded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "compliant",
+          "type": "bool"
+        }
+      ],
+      "name": "MonitoringClosed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "deviceId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "policyId",
+          "type": "string"
+        }
+      ],
+      "name": "MonitoringStarted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "policyId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "minTemp",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "maxTemp",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "maxExcursionSeconds",
+          "type": "uint64"
+        }
+      ],
+      "name": "PolicySet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cargoId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "root",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "count",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "from",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "to",
+          "type": "uint64"
+        }
+      ],
+      "name": "ReadingsAnchored",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "name": "activeCargoOf",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes32",
+              "name": "root",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "count",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint64",
+              "name": "from",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "to",
+              "type": "uint64"
+            },
+            {
+              "internalType": "int32",
+              "name": "minTemp",
+              "type": "int32"
+            },
+            {
+              "internalType": "int32",
+              "name": "maxTemp",
+              "type": "int32"
+            },
+            {
+              "internalType": "uint64",
+              "name": "excursionSeconds",
+              "type": "uint64"
+            }
+          ],
+          "internalType": "struct ColdChainMonitor.Window",
+          "name": "_window",
+          "type": "tuple"
+        }
+      ],
+      "name": "anchorReadings",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "cargoTracker",
+      "outputs": [
+        {
+          "internalType": "contract ICargoTrackerView",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        }
+      ],
+      "name": "closeMonitoring",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "devices",
+      "outputs": [
+        {
+          "internalType": "contract IDeviceRegistry",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_policyId",
+          "type": "string"
+        }
+      ],
+      "name": "getPolicy",
+      "outputs": [
+        {
+          "internalType": "int32",
+          "name": "minTemp",
+          "type": "int32"
+        },
+        {
+          "internalType": "int32",
+          "name": "maxTemp",
+          "type": "int32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "maxExcursionSeconds",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_index",
+          "type": "uint256"
+        }
+      ],
+      "name": "getRoot",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        }
+      ],
+      "name": "getSession",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "deviceId",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "policyId",
+          "type": "string"
+        },
+        {
+          "internalType": "uint64",
+          "name": "startedAt",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "lastWindowEnd",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "excursionSeconds",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "readingCount",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint256",
+          "name": "anchorCount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "compromised",
+          "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "closed",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        }
+      ],
+      "name": "getVerdict",
+      "outputs": [
+        {
+          "internalType": "enum ColdChainMonitor.Verdict",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "owner",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        },
+        {
+          "internalType": "enum ColdChainMonitor.EventKind",
+          "name": "_kind",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint64",
+          "name": "_timestamp",
+          "type": "uint64"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "_payloadHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "reportEvent",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_policyId",
+          "type": "string"
+        },
+        {
+          "internalType": "int32",
+          "name": "_minTemp",
+          "type": "int32"
+        },
+        {
+          "internalType": "int32",
+          "name": "_maxTemp",
+          "type": "int32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "_maxExcursionSeconds",
+          "type": "uint64"
+        }
+      ],
+      "name": "setPolicy",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "_deviceId",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "_policyId",
+          "type": "string"
+        }
+      ],
+      "name": "startMonitoring",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_cargoId",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_index",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "_leaf",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "_proof",
+          "type": "bytes32[]"
+        }
+      ],
+      "name": "verifyReading",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ]
+}

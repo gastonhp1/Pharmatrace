@@ -2,7 +2,10 @@ require("dotenv").config();
 const { ethers } = require("ethers");
 const { ApiError } = require("../utils/errors");
 
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+// cacheTimeout -1 turns off ethers' 250 ms response cache. With it, two transactions sent
+// back to back by the same wallet (easy on a local chain that mines instantly) get the same,
+// stale nonce and the second one fails with "nonce has already been used".
+const provider = new ethers.JsonRpcProvider(process.env.RPC_URL, undefined, { cacheTimeout: -1 });
 
 const ACTOR_KEYS = [
     "MANUFACTURER_KEY",
@@ -41,4 +44,13 @@ function getSignerForAddress(address) {
     return wallet;
 }
 
-module.exports = { provider, getManufacturerSigner, getSignerForAddress };
+// The account the IoT gateway attests with (it has to be an attestor in DeviceRegistry).
+// IOT_GATEWAY_KEY keeps it separate from the manufacturer; without it the manufacturer signs.
+let gatewayWallet = null;
+function getAttestorSigner() {
+    if (!process.env.IOT_GATEWAY_KEY) return getManufacturerSigner();
+    if (!gatewayWallet) gatewayWallet = new ethers.Wallet(process.env.IOT_GATEWAY_KEY, provider);
+    return gatewayWallet;
+}
+
+module.exports = { provider, getManufacturerSigner, getSignerForAddress, getAttestorSigner };

@@ -3,6 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const { traceDrug, registerDrug, transferDrug, markInUse } = require("./services/traceDrugService");
 const cargoRoutes = require("./routes/cargo");
+const iotRoutes = require("./routes/iot");
+const { startAnchorLoop } = require("./services/iotService");
 const { sendError } = require("./utils/errors");
 const { requireString, requireAddress, requireState } = require("./utils/validate");
 
@@ -12,6 +14,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 app.use("/api/cargo", cargoRoutes);
+app.use("/api/iot", iotRoutes);
 
 app.get("/", (req, res) => {
     res.send("PharmaTrace Backend is running 🚀");
@@ -71,4 +74,11 @@ app.post("/api/mark-in-use", async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`✅ Backend running on http://localhost:${PORT}`);
+
+    // Optional: anchor the IoT readings of every monitored cargo on a timer.
+    const anchorEvery = Number(process.env.IOT_ANCHOR_INTERVAL_SECONDS);
+    if (anchorEvery > 0) {
+        startAnchorLoop(anchorEvery);
+        console.log(`⚓ Anchoring IoT readings every ${anchorEvery}s`);
+    }
 });
