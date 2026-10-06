@@ -8,13 +8,14 @@ transporte.
 > Es un prototipo pensado para correr en una red local de Hardhat. No está listo para
 > producción: ver [Limitaciones conocidas](#limitaciones-conocidas).
 
-El proyecto tiene tres partes:
+El proyecto tiene estas partes:
 
 | Parte | Dónde | Qué hace |
 | --- | --- | --- |
 | Smart contracts | este repo, `contracts/` | `DrugTracker` (lotes) y `CargoTracker` (cargamentos). Solidity 0.8.20 + Hardhat |
 | Backend | este repo, `backend/` | API REST (Express + ethers v6) que firma y envía las transacciones |
 | Frontend | [PharmaTrace-UI](https://github.com/gastonhp1/PharmaTrace-UI) | Interfaz web (React + Vite) |
+| IoT (cadena de frío) | `iot/`, `contracts/DeviceRegistry.sol`, `contracts/ColdChainMonitor.sol`, `backend/iot/` | Una valija con sensores firma sus lecturas; el backend las verifica y deja evidencia en la cadena. Ver [IoT](#iot-cadena-de-frío) |
 
 ## Cómo funciona
 
@@ -67,15 +68,17 @@ la cadena. El estado que toma el lote lo define el rol del receptor:
 
 ```
 PharmaTrace/
-├── contracts/              Smart contracts (DrugTracker.sol, CargoTracker.sol)
+├── contracts/              Smart contracts (lotes, cargamentos y cadena de frío)
 ├── test/                   Tests de Hardhat de los contratos
 ├── scripts/                Deploy, interacción y exportación
 │   ├── abi/                ABIs, metadata y historial de despliegues
 │   └── helpers/            Balances, firmantes y carga de variables de entorno
 ├── backend/                API Node.js
-│   ├── routes/             Rutas de cargamentos
+│   ├── routes/             Rutas de cargamentos y de IoT
 │   ├── services/           Lógica con ethers (lotes, cargamentos, firmantes)
+│   ├── iot/                Formato de lectura, firmas, Merkle, ingesta (sin depender de la cadena)
 │   └── utils/              Validación y manejo de errores
+├── iot/                    Cadena de frío: simulador de la valija, hardware y docs
 ├── hardhat.config.js       Configuración de Hardhat
 └── README.md
 ```
@@ -95,8 +98,15 @@ npm run compile
 npm test
 ```
 
-Los tests corren en la red en memoria de Hardhat, sin `.env`. Son 59, entre
-`DrugTracker` y `CargoTracker`.
+Los tests corren en la red en memoria de Hardhat, sin `.env`. Son 106, entre `DrugTracker`,
+`CargoTracker` y la cadena de frío (`DeviceRegistry` y `ColdChainMonitor`).
+
+Los del backend (formato de lectura, firmas, Merkle, ingesta) y los del simulador corren aparte:
+
+```bash
+npm run test:backend
+python3 -m unittest discover -s iot/simulator
+```
 
 ## Correr todo en local
 
@@ -206,9 +216,42 @@ Errores (siempre `{"error": "<motivo>"}`):
 | --- | --- |
 | 400 | Datos inválidos (campo vacío, dirección mal formada, `newState` fuera de 0 a 5) o que no coincide con el rol del receptor; cargamento vacío o de más de 100 lotes |
 | 403 | No es el dueño actual, no es paciente (`mark-in-use`), o el dueño no tiene clave configurada |
+| 401 | Falta o es inválida la `x-api-key` (solo rutas IoT, si `IOT_API_KEY` está definida) |
 | 404 | El lote o cargamento no existe |
 | 409 | Ya existe, receptor con un rol que no es el siguiente, lote ya en un cargamento (o bloqueado en uno), cargamento ya entregado, o los lotes de un cargamento tienen distinto dueño |
 | 500 | Error inesperado (red caída, configuración incompleta) |
+| 503 | Rutas IoT sin `DEVICE_REGISTRY_ADDRESS` o `COLD_CHAIN_MONITOR_ADDRESS` |
+
+## IoT: cadena de frío
+
+La valija (caja con sensores de temperatura, humedad, tapa, golpes y GPS) viaja con un **cargamento** y firma cada
+lectura con la clave de su secure element. El backend (el *gateway*) verifica las firmas contra la clave registrada
+on-chain y ancla en `ColdChainMonitor` una raíz de Merkle por ventana de lecturas, el tiempo fuera de rango y los
+eventos de tapa, golpe y sello. Las lecturas crudas no van a la cadena. Cada cargamento termina con un veredicto:
+`Compliant` o `Compromised`. `DrugTracker` y `CargoTracker` no cambian.
+
+Guía completa, arquitectura, formato de lectura, hardware propuesto y modelo de amenazas en [`iot/`](iot/README.md).
+
+| Contrato | Qué hace |
+| --- | --- |
+| `DeviceRegistry` | El dueño registra valijas (clave pública P-256, vencimiento de calibración) y a los *attestors* (cuentas del gateway) |
+| `ColdChainMonitor` | Políticas inmutables (rango de temperatura y segundos permitidos fuera de él). Vincula una valija a un cargamento, recibe ventanas y eventos solo de attestors, y da el veredicto. `verifyReading` comprueba una lectura contra una raíz anclada |
+
+Después de `npm run deploy:iot` (necesita `CARGO_CONTRACT_ADDRESS`), las rutas de `/api/iot`:
+
+| Método | Ruta | Body |
+| --- | --- | --- |
+| POST | `/api/iot/readings` | `deviceId`, `readings[]` de `{payload, signature}` en hex. No usa `x-api-key`: la valida la firma |
+| POST | `/api/iot/devices` | `deviceId`, `pubKey` (64 bytes hex), `calibrationExpiry` (segundos Unix) |
+| POST | `/api/iot/policies` | `policyId`, `minTemp`, `maxTemp` (centésimas de °C), `maxExcursionSeconds` |
+| POST | `/api/iot/monitoring/start` | `cargoId`, `deviceId`, `policyId` |
+| POST | `/api/iot/cargo/:cargoId/anchor` | Ancla las lecturas pendientes del cargamento |
+| POST | `/api/iot/monitoring/close` | `cargoId` (ancla lo pendiente y cierra: el veredicto queda final) |
+| GET | `/api/iot/cargo/:cargoId` | Estado, veredicto y última lectura |
+| GET | `/api/iot/cargo/:cargoId/proof/:seq` | Prueba de Merkle, payload y firma de una lectura anclada |
+
+Las rutas que mandan transacciones piden el header `x-api-key` si definís `IOT_API_KEY`. Sin los contratos IoT
+configurados responden 503 y el resto de la API sigue funcionando.
 
 ## Scripts
 
@@ -218,6 +261,7 @@ Errores (siempre `{"error": "<motivo>"}`):
 | `deploy-to-env-and-frontend.js` | `npm run deploy:all` | Despliega `DrugTracker` y `CargoTracker` y exporta `backend/.env`, ABIs y archivos del frontend |
 | `export-artifacts.js` | `npm run export:frontend` | Variante de `deploy:all` que además guarda metadata e historial de despliegues y escribe `.env.public` para Vite |
 | `deploy-cargo.js` | `npx hardhat run scripts/deploy-cargo.js --network localhost` | Despliega solo `CargoTracker`, lo vincula al `DrugTracker` y actualiza `CARGO_CONTRACT_ADDRESS` en los `.env` |
+| `deploy-iot.js` | `npm run deploy:iot` | Despliega `DeviceRegistry` y `ColdChainMonitor` (usa `CARGO_CONTRACT_ADDRESS`), registra al gateway como attestor, crea dos políticas de ejemplo, exporta los ABIs y guarda las direcciones en los `.env` |
 | `full-trace.js` | `npx hardhat run scripts/full-trace.js --network localhost` | Registra y transfiere un lote de prueba por toda la cadena, con las cuentas de Hardhat |
 | `traceDrug.js` | `node scripts/traceDrug.js <BATCH>` | Imprime la trazabilidad de un lote existente |
 | `interact.js` | `node scripts/interact.js <BATCH>` | Registra un lote y lo pasa por toda la cadena hasta el paciente; se puede reanudar |
@@ -240,6 +284,14 @@ Errores (siempre `{"error": "<motivo>"}`):
   historial propio (se reconstruye con los eventos `CargoTransferred`).
 - Los números de lote son `string`, y en los eventos están indexados: el log guarda su hash, no
   se puede leer el valor original.
+
+**IoT** (prototipo; detalle en [`iot/docs/ARCHITECTURE.md`](iot/docs/ARCHITECTURE.md))
+
+- El gateway guarda las lecturas en archivos y asume un solo proceso: la raíz de Merkle prueba las lecturas, pero si
+  se pierden no hay nada que probar. Para producción hace falta una base de datos con respaldo.
+- No se detectan huecos de datos (un dispositivo apagado o que descarta lecturas).
+- Los límites de temperatura y el presupuesto de excursión de `deploy-iot.js` son de ejemplo, no de ningún producto.
+- La evidencia prueba qué se midió y cuándo se registró, no que el sensor no haya sido manipulado físicamente.
 
 **Scripts y despliegue**
 

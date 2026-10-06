@@ -33,6 +33,33 @@ const REVERT_STATUS = {
     "Cargo already delivered": 409,
     "Cargo must have at least one drug": 400,
     "Too many drugs in a cargo": 400,
+    // DeviceRegistry
+    "Device does not exist": 404,
+    "Device already registered": 409,
+    "Invalid device id": 400,
+    "Public key must be 64 bytes": 400,
+    "Calibration already expired": 400,
+    "Invalid attestor address.": 400,
+    // ColdChainMonitor
+    "Monitoring not found": 404,
+    "Monitoring already started": 409,
+    "Monitoring already closed": 409,
+    "Policy does not exist": 404,
+    "Policy already exists": 409,
+    "Invalid policy id": 400,
+    "Invalid temperature range": 400,
+    "Device is not operational": 409,
+    "Device is already in use": 409,
+    "Not authorized to monitor this cargo.": 403,
+    "Only an attestor can perform this action.": 403,
+    "Invalid root": 400,
+    "Empty window": 400,
+    "Invalid window": 400,
+    "Window overlaps previous one": 409,
+    "Window is in the future": 409,
+    "Inconsistent excursion data": 409,
+    "Event is in the future": 409,
+    "Anchor not found": 404,
 };
 
 function revertReason(err) {

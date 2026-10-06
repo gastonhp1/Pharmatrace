@@ -26,4 +26,20 @@ function requireState(value) {
     return state;
 }
 
-module.exports = { requireString, requireAddress, requireState };
+function requireInteger(value, name, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
+    if (!Number.isInteger(value) || value < min || value > max) {
+        throw new ApiError(400, `${name} must be an integer between ${min} and ${max}`);
+    }
+    return value;
+}
+
+// Hex string (with or without 0x) of exactly `bytes` bytes. Returns it with the 0x prefix.
+function requireHexBytes(value, name, bytes) {
+    const clean = typeof value === "string" && value.startsWith("0x") ? value.slice(2) : value;
+    if (typeof clean !== "string" || !/^[0-9a-fA-F]*$/.test(clean) || clean.length !== bytes * 2) {
+        throw new ApiError(400, `${name} must be ${bytes} bytes in hex`);
+    }
+    return `0x${clean}`;
+}
+
+module.exports = { requireString, requireAddress, requireState, requireInteger, requireHexBytes };

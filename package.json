@@ -8,7 +8,9 @@
     "test": "npx hardhat test",
     "deploy": "npx hardhat run scripts/deploy.js --network localhost",
     "deploy:all": "npx hardhat run scripts/deploy-to-env-and-frontend.js --network localhost",
-    "export:frontend": "npx hardhat run scripts/export-artifacts.js --network localhost"
+    "deploy:iot": "npx hardhat run scripts/deploy-iot.js --network localhost",
+    "export:frontend": "npx hardhat run scripts/export-artifacts.js --network localhost",
+    "test:backend": "cd backend && npm test"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^3.0.0",
