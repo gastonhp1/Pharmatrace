@@ -4,6 +4,8 @@ const cors = require("cors");
 const { traceDrug, registerDrug, transferDrug, markInUse } = require("./services/traceDrugService");
 const cargoRoutes = require("./routes/cargo");
 const { requireApiKey } = require("./middleware/auth");
+const iotRoutes = require("./routes/iot");
+const { startAnchorLoop } = require("./services/iotService");
 const { sendError } = require("./utils/errors");
 const { requireString, requireAddress, requireState } = require("./utils/validate");
 
@@ -12,9 +14,13 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
-// Reads are public; anything that signs a transaction needs the x-api-key header.
-app.use("/api", requireApiKey());
+// Reads are public; anything else that signs a transaction needs the x-api-key header (API_KEY).
+// /api/iot has its own rules (readings are validated by their device signature, the admin
+// routes by IOT_API_KEY), so it is left out of this check.
+const writeGuard = requireApiKey();
+app.use("/api", (req, res, next) => (req.path.startsWith("/iot") ? next() : writeGuard(req, res, next)));
 app.use("/api/cargo", cargoRoutes);
+app.use("/api/iot", iotRoutes);
 
 app.get("/", (req, res) => {
     res.send("PharmaTrace Backend is running 🚀");
@@ -78,4 +84,11 @@ if (!process.env.API_KEY && process.env.AUTH_DISABLED !== "true") {
 
 app.listen(PORT, () => {
     console.log(`✅ Backend running on http://localhost:${PORT}`);
+
+    // Optional: anchor the IoT readings of every monitored cargo on a timer.
+    const anchorEvery = Number(process.env.IOT_ANCHOR_INTERVAL_SECONDS);
+    if (anchorEvery > 0) {
+        startAnchorLoop(anchorEvery);
+        console.log(`⚓ Anchoring IoT readings every ${anchorEvery}s`);
+    }
 });
