@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { traceDrug, registerDrug, transferDrug, markInUse } = require("./services/traceDrugService");
 const cargoRoutes = require("./routes/cargo");
+const { requireApiKey } = require("./middleware/auth");
 const iotRoutes = require("./routes/iot");
 const { startAnchorLoop } = require("./services/iotService");
 const { sendError } = require("./utils/errors");
@@ -13,6 +14,11 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+// Reads are public; anything else that signs a transaction needs the x-api-key header (API_KEY).
+// /api/iot has its own rules (readings are validated by their device signature, the admin
+// routes by IOT_API_KEY), so it is left out of this check.
+const writeGuard = requireApiKey();
+app.use("/api", (req, res, next) => (req.path.startsWith("/iot") ? next() : writeGuard(req, res, next)));
 app.use("/api/cargo", cargoRoutes);
 app.use("/api/iot", iotRoutes);
 
@@ -71,6 +77,10 @@ app.post("/api/mark-in-use", async (req, res) => {
         sendError(res, err, "Error marking drug as in use");
     }
 });
+
+if (!process.env.API_KEY && process.env.AUTH_DISABLED !== "true") {
+    console.warn("⚠️  API_KEY is not set: write endpoints will answer 503 (set AUTH_DISABLED=true for local development).");
+}
 
 app.listen(PORT, () => {
     console.log(`✅ Backend running on http://localhost:${PORT}`);
