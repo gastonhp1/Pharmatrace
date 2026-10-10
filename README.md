@@ -264,7 +264,7 @@ Después de `npm run deploy:iot` (necesita `CARGO_CONTRACT_ADDRESS`), las rutas 
 | GET | `/api/iot/cargo/:cargoId` | Estado, veredicto y última lectura |
 | GET | `/api/iot/cargo/:cargoId/proof/:seq` | Prueba de Merkle, payload y firma de una lectura anclada |
 
-Las rutas que mandan transacciones piden el header `x-api-key` si definís `IOT_API_KEY`. Sin los contratos IoT
+Las rutas que mandan transacciones piden el header `x-api-key`: `IOT_API_KEY` si la definís y, si no, `API_KEY`. Sin ninguna responden 503 (salvo `AUTH_DISABLED=true`). Sin los contratos IoT
 configurados responden 503 y el resto de la API sigue funcionando.
 
 ## Scripts

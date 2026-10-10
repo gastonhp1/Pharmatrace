@@ -16,7 +16,7 @@ sensor **midió bien**. Todo esto trata de achicar esa brecha. Qué cubre el dis
 | Reloj adelantado | El gateway rechaza timestamps del futuro (con tolerancia) y el contrato rechaza ventanas del futuro | Reloj atrasado: no se detecta de forma consistente |
 | El gateway miente | Es el attestor: puede anclar lo que quiera. Por eso `IOT_GATEWAY_KEY` va separada del fabricante y hay una clave de API para las rutas que mandan transacciones | Varios attestors o verificación independiente; auditar con `proof` (las firmas del dispositivo se pueden volver a verificar sin confiar en el gateway) |
 | Spam de lecturas al gateway | Solo se aceptan firmas válidas de dispositivos con monitoreo activo | Límite de tasa |
-| Quien llegue a la API administra | Las rutas que mandan transacciones piden `x-api-key` si se define `IOT_API_KEY` | El resto de la API (lotes, cargamentos) sigue **sin autenticación** y es custodial, como dice el README |
+| Quien llegue a la API administra | Las rutas que mandan transacciones piden `x-api-key` (`IOT_API_KEY`, o `API_KEY` si no hay otra; sin ninguna responden 503) | El resto de las escrituras usa la misma clave compartida y es custodial, como dice el README |
 
 ## Notas
 
