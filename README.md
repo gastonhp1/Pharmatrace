@@ -86,6 +86,8 @@ PharmaTrace/
 ## Requisitos
 
 - Node.js (probado con la versión 22) y npm.
+- Python 3 con `cryptography` (`pip install -r iot/simulator/requirements.txt`), solo para el simulador
+  de la valija y sus tests.
 - Para el frontend, el repo [PharmaTrace-UI](https://github.com/gastonhp1/PharmaTrace-UI)
   clonado **al lado** de este (`../PharmaTrace-UI`), porque los scripts de deploy le exportan
   el ABI y la dirección del contrato.
@@ -231,6 +233,10 @@ eventos de tapa, golpe y sello. Las lecturas crudas no van a la cadena. Cada car
 `Compliant` o `Compromised`. `DrugTracker` y `CargoTracker` no cambian.
 
 Guía completa, arquitectura, formato de lectura, hardware propuesto y modelo de amenazas en [`iot/`](iot/README.md).
+
+El firmware del ESP32 va a ir en un repo aparte (todavía no existe). El contrato entre ambos es el formato de
+lectura de [`iot/docs/READING_FORMAT.md`](iot/docs/READING_FORMAT.md), con un vector de prueba que el firmware tiene
+que reproducir byte a byte.
 
 | Contrato | Qué hace |
 | --- | --- |
