@@ -60,3 +60,44 @@ test("AUTH_DISABLED=true opens writes explicitly", async () => {
         assert.strictEqual((await post(base)).status, 200);
     });
 });
+
+// ---- IoT admin routes -------------------------------------------------------------------------
+const { requireAdminKey } = require("../middleware/auth");
+
+async function withAdminServer(env, fn) {
+    const app = express();
+    app.post("/admin", requireAdminKey(env), (req, res) => res.json({ ok: true }));
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    try {
+        await fn(`http://127.0.0.1:${server.address().port}`);
+    } finally {
+        await new Promise((resolve) => server.close(resolve));
+    }
+}
+const admin = (base, key) =>
+    fetch(`${base}/admin`, { method: "POST", headers: key ? { "x-api-key": key } : {} });
+
+test("admin routes use IOT_API_KEY when set", async () => {
+    await withAdminServer({ IOT_API_KEY: "iot", API_KEY: "main" }, async (base) => {
+        assert.strictEqual((await admin(base, "iot")).status, 200);
+        assert.strictEqual((await admin(base, "main")).status, 401);
+        assert.strictEqual((await admin(base)).status, 401);
+    });
+});
+
+test("admin routes fall back to API_KEY", async () => {
+    await withAdminServer({ API_KEY: "main" }, async (base) => {
+        assert.strictEqual((await admin(base, "main")).status, 200);
+        assert.strictEqual((await admin(base)).status, 401);
+    });
+});
+
+test("admin routes fail closed with no key, unless AUTH_DISABLED=true", async () => {
+    await withAdminServer({}, async (base) => {
+        assert.strictEqual((await admin(base)).status, 503);
+    });
+    await withAdminServer({ AUTH_DISABLED: "true" }, async (base) => {
+        assert.strictEqual((await admin(base)).status, 200);
+    });
+});

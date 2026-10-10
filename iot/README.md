@@ -71,7 +71,7 @@ python3 -m unittest discover -s iot/simulator # simulador (mismo vector de prueb
 ## Configuración del gateway
 
 Variables opcionales en `backend/.env` (ver `backend/.env.example`): `IOT_GATEWAY_KEY` (cuenta que atesta,
-separada del fabricante), `IOT_API_KEY` (protege las rutas que mandan transacciones), `IOT_DATA_DIR`,
+separada del fabricante), `IOT_API_KEY` (clave propia de las rutas que mandan transacciones; si falta se usa `API_KEY`), `IOT_DATA_DIR`,
 `IOT_SAMPLE_SECONDS`, `IOT_MAX_CLOCK_SKEW_SECONDS` e `IOT_ANCHOR_INTERVAL_SECONDS` (anclaje automático).
 Sin `DEVICE_REGISTRY_ADDRESS` y `COLD_CHAIN_MONITOR_ADDRESS` las rutas IoT responden 503 y el resto de la API
 funciona igual.

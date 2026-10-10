@@ -34,4 +34,14 @@ function requireApiKey(env = process.env) {
     };
 }
 
-module.exports = { requireApiKey };
+// Same check for the IoT admin routes (register devices, start/anchor/close a monitoring), which
+// can have their own key. IOT_API_KEY wins; otherwise API_KEY is used, so these routes are never
+// left open by forgetting to set a second key. Still fails closed (503) with neither.
+function requireAdminKey(env = process.env) {
+    return function adminKeyMiddleware(req, res, next) {
+        const key = env.IOT_API_KEY || env.API_KEY;
+        return requireApiKey({ ...env, API_KEY: key })(req, res, next);
+    };
+}
+
+module.exports = { requireApiKey, requireAdminKey };

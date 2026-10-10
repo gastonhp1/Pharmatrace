@@ -1,25 +1,16 @@
-const crypto = require("crypto");
 const express = require("express");
 const router = express.Router();
 const iot = require("../services/iotService");
-const { ApiError, sendError } = require("../utils/errors");
+const { sendError } = require("../utils/errors");
+const { requireAdminKey: adminKeyGuard } = require("../middleware/auth");
 const { requireString, requireInteger, requireHexBytes } = require("../utils/validate");
 
 // Everything that sends a transaction (registering devices, starting, anchoring and closing a
-// monitoring) requires the x-api-key header when IOT_API_KEY is set. Uploading readings never
-// does: a device has no way to hold an admin secret, and a reading is only accepted if its
-// signature checks against the key registered on-chain for that device.
-function requireAdminKey(req, res, next) {
-    const expected = process.env.IOT_API_KEY;
-    if (!expected) return next();
-
-    const received = Buffer.from(String(req.get("x-api-key") || ""));
-    const wanted = Buffer.from(expected);
-    if (received.length !== wanted.length || !crypto.timingSafeEqual(received, wanted)) {
-        return sendError(res, new ApiError(401, "Missing or invalid x-api-key"));
-    }
-    next();
-}
+// monitoring) requires the x-api-key header: IOT_API_KEY, or API_KEY if there is no separate one
+// (see middleware/auth.js; without either it answers 503). Uploading readings never does: a device
+// has no way to hold an admin secret, and a reading is only accepted if its signature checks
+// against the key registered on-chain for that device.
+const requireAdminKey = adminKeyGuard();
 
 // 📡 Upload signed readings: { deviceId, readings: [{ payload, signature }] } (hex)
 router.post("/readings", async (req, res) => {
