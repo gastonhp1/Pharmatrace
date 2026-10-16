@@ -85,3 +85,46 @@ jobs:
       file: backend/Dockerfile
       push: ${{ github.event_name != 'pull_request' }}
       platforms: linux/amd64
+
+  # Pin each signed digest in the GitOps repo: the golden-path promote job
+  # verifies the signature and opens an auto-merge PR per image.
+  promote-chain:
+    name: Promote (chain) → local
+    if: github.ref == 'refs/heads/main'
+    needs: image-chain
+    uses: gastonhp1/secure-cicd-golden-path/.github/workflows/reusable-gitops-promote.yml@main
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    with:
+      environment: local
+      image: ${{ needs.image-chain.outputs.image }}
+      digest: ${{ needs.image-chain.outputs.digest }}
+      version: ${{ needs.image-chain.outputs.version }}
+      values-files: gitops/apps/pharmatrace/values-local.yaml
+      image-path: .images.chain
+      auto-merge: true
+    secrets:
+      GITOPS_APP_ID: ${{ secrets.GITOPS_APP_ID }}
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+  promote-api:
+    name: Promote (API) → local
+    if: github.ref == 'refs/heads/main'
+    needs: image-api
+    uses: gastonhp1/secure-cicd-golden-path/.github/workflows/reusable-gitops-promote.yml@main
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    with:
+      environment: local
+      image: ${{ needs.image-api.outputs.image }}
+      digest: ${{ needs.image-api.outputs.digest }}
+      version: ${{ needs.image-api.outputs.version }}
+      values-files: gitops/apps/pharmatrace/values-local.yaml
+      image-path: .images.backend
+      auto-merge: true
+    secrets:
+      GITOPS_APP_ID: ${{ secrets.GITOPS_APP_ID }}
+      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
