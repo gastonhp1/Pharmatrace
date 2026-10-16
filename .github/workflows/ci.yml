@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   contracts:
     name: Contracts (Hardhat)
@@ -43,3 +46,42 @@ jobs:
           python-version: "3.12"
       - run: pip install -r iot/simulator/requirements.txt
       - run: python -m unittest discover -s iot/simulator
+
+  # Images: built, scanned (Trivy gate), pushed to GHCR and signed by the
+  # golden-path reusable workflow, the only signing identity the platform's
+  # Kyverno policy trusts. PRs build + scan only; main pushes and signs.
+  image-chain:
+    name: Image (chain)
+    needs: contracts
+    uses: gastonhp1/secure-cicd-golden-path/.github/workflows/reusable-container.yml@main
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+    with:
+      image-name: pharmatrace-chain
+      context: .
+      push: ${{ github.event_name != 'pull_request' }}
+      platforms: linux/amd64
+      # Local dev chain only. Hardhat 2 still carries HIGH findings whose fix is
+      # the Hardhat 3 migration; they stay visible in the Security tab.
+      fail-on-severity: CRITICAL
+
+  image-api:
+    name: Image (API)
+    needs: backend
+    uses: gastonhp1/secure-cicd-golden-path/.github/workflows/reusable-container.yml@main
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+    with:
+      image-name: pharmatrace-api
+      context: .
+      file: backend/Dockerfile
+      push: ${{ github.event_name != 'pull_request' }}
+      platforms: linux/amd64

@@ -4,7 +4,7 @@
 # (a half-done deploy would shift the contract addresses).
 set -eu
 
-npx hardhat node --hostname 0.0.0.0 --port 8545 &
+hardhat node --hostname 0.0.0.0 --port 8545 &
 node_pid=$!
 trap 'kill -TERM "$node_pid" 2>/dev/null' TERM INT
 
@@ -17,7 +17,7 @@ ping();
 '
 
 # Already compiled in the image (and the root filesystem is read-only).
-npx hardhat run --no-compile scripts/deploy.js --network localhost
+hardhat run --no-compile scripts/deploy.js --network localhost
 touch /tmp/ready # readiness probe: contracts are deployed
 
 wait "$node_pid"
