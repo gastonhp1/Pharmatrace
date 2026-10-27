@@ -21,12 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        # Everything a step prints also goes to a log, so a failure can be shown as an
-        # annotation on the PR (see the last step of each job).
-        shell: bash --noprofile --norc -o pipefail -c 'bash -e {0} 2>&1 | tee -a "$RUNNER_TEMP/job.log"'
         working-directory: fabric/chaincode/pharmatrace
     steps:
       - uses: actions/checkout@v4
+      # Every later step also writes its output to a log (bash sources BASH_ENV), so a failure
+      # can be shown as an annotation on the PR (see the last steps of the job).
+      - name: Keep a log for the PR annotations
+        working-directory: .
+        run: |
+          echo 'exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1' > "$RUNNER_TEMP/tee.sh"
+          echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
           go-version-file: fabric/chaincode/pharmatrace/go.mod
@@ -36,9 +40,9 @@ jobs:
       - run: go test -race -cover ./...
       - name: Show the failure on the PR
         if: failure()
-        shell: bash
+        env: { BASH_ENV: "" }
         run: |
-          tail -n 60 "$RUNNER_TEMP/job.log" | python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=Last lines of the log::" + m)'
+          tail -n 60 "$RUNNER_TEMP/job.log" 2>/dev/null | python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=Last lines of the log::" + m)'
 
   network:
     name: Network (4 orgs + Raft, end to end)
@@ -47,12 +51,16 @@ jobs:
     timeout-minutes: 25
     defaults:
       run:
-        # Everything a step prints also goes to a log, so a failure can be shown as an
-        # annotation on the PR (see the last step of each job).
-        shell: bash --noprofile --norc -o pipefail -c 'bash -e {0} 2>&1 | tee -a "$RUNNER_TEMP/job.log"'
         working-directory: fabric/network
     steps:
       - uses: actions/checkout@v4
+      # Every later step also writes its output to a log (bash sources BASH_ENV), so a failure
+      # can be shown as an annotation on the PR (see the last steps of the job).
+      - name: Keep a log for the PR annotations
+        working-directory: .
+        run: |
+          echo 'exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1' > "$RUNNER_TEMP/tee.sh"
+          echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
       - run: shellcheck -x network.sh scripts/*.sh
       - run: ./network.sh prereq
       - run: ./network.sh up
@@ -63,10 +71,10 @@ jobs:
       - run: CC_VERSION=0.2 ./network.sh deploy && ./network.sh smoke
       - name: Show the failure on the PR
         if: failure()
-        shell: bash
+        env: { BASH_ENV: "" }
         run: |
           annotate() { python3 -c 'import sys; t, m = sys.argv[1], sys.stdin.read(); print("::%s title=%s::%s" % (sys.argv[2], t, m.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")))' "$1" "$2"; }
-          tail -n 60 "$RUNNER_TEMP/job.log" | annotate "Last lines of the log" error
+          tail -n 60 "$RUNNER_TEMP/job.log" 2>/dev/null | annotate "Last lines of the log" error
           for c in $(docker ps -a --format '{{.Names}}' | grep -v _pharmatrace | head -8); do
             docker logs --tail 25 "$c" 2>&1 | annotate "$c" warning
           done
