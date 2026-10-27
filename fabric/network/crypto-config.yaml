@@ -1,0 +1,62 @@
+# Identities for the local network, generated with cryptogen.
+#
+# cryptogen is only for development: it creates every CA and key in one go, on one machine.
+# In a real consortium each org runs its own Fabric CA (or uses its PKI) and only shares its
+# public certificates. That is the PKI step of the roadmap (fabric/README.md).
+#
+# EnableNodeOUs puts each certificate in a role (admin, peer, client, orderer) through its OU,
+# which is what makes policies like 'LabMSP.peer' or 'RegMSP.admin' work.
+
+OrdererOrgs:
+  - Name: Orderer
+    Domain: orderer.pharmatrace.ar
+    EnableNodeOUs: true
+    Specs:
+      - Hostname: orderer0
+        SANS: [localhost, 127.0.0.1]
+      - Hostname: orderer1
+        SANS: [localhost, 127.0.0.1]
+      - Hostname: orderer2
+        SANS: [localhost, 127.0.0.1]
+
+PeerOrgs:
+  # Laboratorio: registers batches and ships them to distributors.
+  - Name: Lab
+    Domain: lab.pharmatrace.ar
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS: [localhost, 127.0.0.1]
+    Users:
+      Count: 1
+
+  # Droguería: receives from labs, ships to pharmacies, carries the IoT valija.
+  # User2 plays the IoT gateway (backend/iot) that anchors the readings.
+  - Name: Dist
+    Domain: dist.pharmatrace.ar
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS: [localhost, 127.0.0.1]
+    Users:
+      Count: 2
+
+  # Farmacia: receives from distributors and dispenses to patients.
+  - Name: Farma
+    Domain: farma.pharmatrace.ar
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS: [localhost, 127.0.0.1]
+    Users:
+      Count: 1
+
+  # Regulador (ANMAT-like): registers orgs, sets policies, recalls, co-endorses every write.
+  - Name: Reg
+    Domain: reg.pharmatrace.ar
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS: [localhost, 127.0.0.1]
+    Users:
+      Count: 1

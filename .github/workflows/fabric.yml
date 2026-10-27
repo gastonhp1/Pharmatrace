@@ -1,0 +1,60 @@
+name: Fabric
+
+on:
+  pull_request:
+    paths: ["fabric/**", ".github/workflows/fabric.yml"]
+  push:
+    branches: [main]
+    paths: ["fabric/**", ".github/workflows/fabric.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fabric-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chaincode:
+    name: Chaincode (go test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fabric/chaincode/pharmatrace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: fabric/chaincode/pharmatrace/go.mod
+          cache-dependency-path: fabric/chaincode/pharmatrace/go.sum
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -cover ./...
+
+  network:
+    name: Network (4 orgs + Raft, end to end)
+    needs: chaincode
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: fabric/network
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -x network.sh scripts/*.sh
+      - run: ./network.sh prereq
+      - run: ./network.sh up
+      - run: ./network.sh channel
+      - run: ./network.sh deploy
+      - run: ./network.sh smoke
+      # Deploying again must upgrade in place (sequence 2) and keep the data.
+      - run: CC_VERSION=0.2 ./network.sh deploy && ./network.sh smoke
+      - name: Container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -a --format '{{.Names}}'); do
+            echo "::group::$c"; docker logs --tail 200 "$c" 2>&1; echo "::endgroup::"
+          done
+      - if: always()
+        run: ./network.sh down

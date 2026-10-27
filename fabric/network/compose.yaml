@@ -1,0 +1,220 @@
+# Local PharmaTrace network: 3 Raft orderers, one peer per org and, once deployed, one chaincode
+# container per peer (chaincode as a service). Started by ./network.sh, not by hand: the
+# certificates come from `./network.sh up` and CHAINCODE_ID from `./network.sh deploy`.
+
+name: pharmatrace
+
+x-orderer-env: &orderer-env
+  FABRIC_LOGGING_SPEC: INFO
+  ORDERER_GENERAL_LISTENADDRESS: 0.0.0.0
+  ORDERER_GENERAL_LOCALMSPID: OrdererMSP
+  ORDERER_GENERAL_LOCALMSPDIR: /var/hyperledger/orderer/msp
+  ORDERER_GENERAL_TLS_ENABLED: "true"
+  ORDERER_GENERAL_TLS_PRIVATEKEY: /var/hyperledger/orderer/tls/server.key
+  ORDERER_GENERAL_TLS_CERTIFICATE: /var/hyperledger/orderer/tls/server.crt
+  ORDERER_GENERAL_TLS_ROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+  ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE: /var/hyperledger/orderer/tls/server.crt
+  ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY: /var/hyperledger/orderer/tls/server.key
+  ORDERER_GENERAL_CLUSTER_ROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+  ORDERER_GENERAL_BOOTSTRAPMETHOD: none
+  ORDERER_CHANNELPARTICIPATION_ENABLED: "true"
+  ORDERER_ADMIN_TLS_ENABLED: "true"
+  ORDERER_ADMIN_TLS_CERTIFICATE: /var/hyperledger/orderer/tls/server.crt
+  ORDERER_ADMIN_TLS_PRIVATEKEY: /var/hyperledger/orderer/tls/server.key
+  ORDERER_ADMIN_TLS_ROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+  ORDERER_ADMIN_TLS_CLIENTROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+  ORDERER_METRICS_PROVIDER: prometheus
+
+x-peer-env: &peer-env
+  FABRIC_LOGGING_SPEC: INFO
+  CORE_PEER_TLS_ENABLED: "true"
+  CORE_PEER_PROFILE_ENABLED: "false"
+  CORE_PEER_MSPCONFIGPATH: /etc/hyperledger/fabric/msp
+  CORE_PEER_TLS_CERT_FILE: /etc/hyperledger/fabric/tls/server.crt
+  CORE_PEER_TLS_KEY_FILE: /etc/hyperledger/fabric/tls/server.key
+  CORE_PEER_TLS_ROOTCERT_FILE: /etc/hyperledger/fabric/tls/ca.crt
+  CORE_METRICS_PROVIDER: prometheus
+  CORE_CHAINCODE_EXECUTETIMEOUT: 300s
+  # No Docker socket is mounted: the chaincode runs as a service (see below), so the peer never
+  # builds or launches containers.
+
+x-orderer: &orderer
+  image: hyperledger/fabric-orderer:${FABRIC_VERSION:-3.1.5}
+  command: orderer
+  working_dir: /root
+  networks: [pharmatrace]
+
+x-peer: &peer
+  image: hyperledger/fabric-peer:${FABRIC_VERSION:-3.1.5}
+  command: peer node start
+  working_dir: /root
+  networks: [pharmatrace]
+
+x-chaincode: &chaincode
+  image: pharmatrace-chaincode:${CHAINCODE_VERSION:-0.1}
+  profiles: [chaincode]
+  restart: unless-stopped
+  networks: [pharmatrace]
+
+networks:
+  pharmatrace:
+    name: pharmatrace
+
+volumes:
+  orderer0: {}
+  orderer1: {}
+  orderer2: {}
+  peer0-lab: {}
+  peer0-dist: {}
+  peer0-farma: {}
+  peer0-reg: {}
+
+services:
+  # ------------------------------------------------------------------ orderers (Raft)
+  orderer0.orderer.pharmatrace.ar:
+    <<: *orderer
+    container_name: orderer0.orderer.pharmatrace.ar
+    environment:
+      <<: *orderer-env
+      ORDERER_GENERAL_LISTENPORT: "7050"
+      ORDERER_ADMIN_LISTENADDRESS: 0.0.0.0:7053
+      ORDERER_OPERATIONS_LISTENADDRESS: 0.0.0.0:9443
+    volumes:
+      - ./organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer0.orderer.pharmatrace.ar/msp:/var/hyperledger/orderer/msp
+      - ./organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer0.orderer.pharmatrace.ar/tls:/var/hyperledger/orderer/tls
+      - orderer0:/var/hyperledger/production/orderer
+    ports: ["7050:7050", "7053:7053", "9443:9443"]
+
+  orderer1.orderer.pharmatrace.ar:
+    <<: *orderer
+    container_name: orderer1.orderer.pharmatrace.ar
+    environment:
+      <<: *orderer-env
+      ORDERER_GENERAL_LISTENPORT: "8050"
+      ORDERER_ADMIN_LISTENADDRESS: 0.0.0.0:8053
+      ORDERER_OPERATIONS_LISTENADDRESS: 0.0.0.0:9444
+    volumes:
+      - ./organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer1.orderer.pharmatrace.ar/msp:/var/hyperledger/orderer/msp
+      - ./organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer1.orderer.pharmatrace.ar/tls:/var/hyperledger/orderer/tls
+      - orderer1:/var/hyperledger/production/orderer
+    ports: ["8050:8050", "8053:8053", "9444:9444"]
+
+  orderer2.orderer.pharmatrace.ar:
+    <<: *orderer
+    container_name: orderer2.orderer.pharmatrace.ar
+    environment:
+      <<: *orderer-env
+      ORDERER_GENERAL_LISTENPORT: "9050"
+      ORDERER_ADMIN_LISTENADDRESS: 0.0.0.0:9053
+      ORDERER_OPERATIONS_LISTENADDRESS: 0.0.0.0:9445
+    volumes:
+      - ./organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer2.orderer.pharmatrace.ar/msp:/var/hyperledger/orderer/msp
+      - ./organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer2.orderer.pharmatrace.ar/tls:/var/hyperledger/orderer/tls
+      - orderer2:/var/hyperledger/production/orderer
+    ports: ["9050:9050", "9053:9053", "9445:9445"]
+
+  # ------------------------------------------------------------------ peers
+  peer0.lab.pharmatrace.ar:
+    <<: *peer
+    container_name: peer0.lab.pharmatrace.ar
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.lab.pharmatrace.ar
+      CORE_PEER_LOCALMSPID: LabMSP
+      CORE_PEER_ADDRESS: peer0.lab.pharmatrace.ar:7051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:7051
+      CORE_PEER_CHAINCODEADDRESS: peer0.lab.pharmatrace.ar:7052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:7052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.lab.pharmatrace.ar:7051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.lab.pharmatrace.ar:7051
+      CORE_OPERATIONS_LISTENADDRESS: 0.0.0.0:9451
+      CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG: '{"peername":"peer0lab"}'
+    volumes:
+      - ./organizations/peerOrganizations/lab.pharmatrace.ar/peers/peer0.lab.pharmatrace.ar/msp:/etc/hyperledger/fabric/msp
+      - ./organizations/peerOrganizations/lab.pharmatrace.ar/peers/peer0.lab.pharmatrace.ar/tls:/etc/hyperledger/fabric/tls
+      - peer0-lab:/var/hyperledger/production
+    ports: ["7051:7051", "9451:9451"]
+
+  peer0.dist.pharmatrace.ar:
+    <<: *peer
+    container_name: peer0.dist.pharmatrace.ar
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.dist.pharmatrace.ar
+      CORE_PEER_LOCALMSPID: DistMSP
+      CORE_PEER_ADDRESS: peer0.dist.pharmatrace.ar:8051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:8051
+      CORE_PEER_CHAINCODEADDRESS: peer0.dist.pharmatrace.ar:8052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:8052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.dist.pharmatrace.ar:8051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.dist.pharmatrace.ar:8051
+      CORE_OPERATIONS_LISTENADDRESS: 0.0.0.0:9452
+      CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG: '{"peername":"peer0dist"}'
+    volumes:
+      - ./organizations/peerOrganizations/dist.pharmatrace.ar/peers/peer0.dist.pharmatrace.ar/msp:/etc/hyperledger/fabric/msp
+      - ./organizations/peerOrganizations/dist.pharmatrace.ar/peers/peer0.dist.pharmatrace.ar/tls:/etc/hyperledger/fabric/tls
+      - peer0-dist:/var/hyperledger/production
+    ports: ["8051:8051", "9452:9452"]
+
+  peer0.farma.pharmatrace.ar:
+    <<: *peer
+    container_name: peer0.farma.pharmatrace.ar
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.farma.pharmatrace.ar
+      CORE_PEER_LOCALMSPID: FarmaMSP
+      CORE_PEER_ADDRESS: peer0.farma.pharmatrace.ar:9051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:9051
+      CORE_PEER_CHAINCODEADDRESS: peer0.farma.pharmatrace.ar:9052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:9052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.farma.pharmatrace.ar:9051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.farma.pharmatrace.ar:9051
+      CORE_OPERATIONS_LISTENADDRESS: 0.0.0.0:9453
+      CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG: '{"peername":"peer0farma"}'
+    volumes:
+      - ./organizations/peerOrganizations/farma.pharmatrace.ar/peers/peer0.farma.pharmatrace.ar/msp:/etc/hyperledger/fabric/msp
+      - ./organizations/peerOrganizations/farma.pharmatrace.ar/peers/peer0.farma.pharmatrace.ar/tls:/etc/hyperledger/fabric/tls
+      - peer0-farma:/var/hyperledger/production
+    ports: ["9051:9051", "9453:9453"]
+
+  peer0.reg.pharmatrace.ar:
+    <<: *peer
+    container_name: peer0.reg.pharmatrace.ar
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.reg.pharmatrace.ar
+      CORE_PEER_LOCALMSPID: RegMSP
+      CORE_PEER_ADDRESS: peer0.reg.pharmatrace.ar:10051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:10051
+      CORE_PEER_CHAINCODEADDRESS: peer0.reg.pharmatrace.ar:10052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:10052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.reg.pharmatrace.ar:10051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.reg.pharmatrace.ar:10051
+      CORE_OPERATIONS_LISTENADDRESS: 0.0.0.0:9454
+      CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG: '{"peername":"peer0reg"}'
+    volumes:
+      - ./organizations/peerOrganizations/reg.pharmatrace.ar/peers/peer0.reg.pharmatrace.ar/msp:/etc/hyperledger/fabric/msp
+      - ./organizations/peerOrganizations/reg.pharmatrace.ar/peers/peer0.reg.pharmatrace.ar/tls:/etc/hyperledger/fabric/tls
+      - peer0-reg:/var/hyperledger/production
+    ports: ["10051:10051", "9454:9454"]
+
+  # ------------------------------------------------------------------ chaincode (one per org)
+  # Each org runs its own copy: an endorsement is only worth something if every org executes
+  # the code on infrastructure it controls. The peer reaches it at <peername>_pharmatrace:9999
+  # (connection.json in the package uses the {{.peername}} template).
+  peer0lab_pharmatrace:
+    <<: *chaincode
+    container_name: peer0lab_pharmatrace
+    environment: { CHAINCODE_ID: "${CHAINCODE_ID:-}", CHAINCODE_SERVER_ADDRESS: "0.0.0.0:9999" }
+  peer0dist_pharmatrace:
+    <<: *chaincode
+    container_name: peer0dist_pharmatrace
+    environment: { CHAINCODE_ID: "${CHAINCODE_ID:-}", CHAINCODE_SERVER_ADDRESS: "0.0.0.0:9999" }
+  peer0farma_pharmatrace:
+    <<: *chaincode
+    container_name: peer0farma_pharmatrace
+    environment: { CHAINCODE_ID: "${CHAINCODE_ID:-}", CHAINCODE_SERVER_ADDRESS: "0.0.0.0:9999" }
+  peer0reg_pharmatrace:
+    <<: *chaincode
+    container_name: peer0reg_pharmatrace
+    environment: { CHAINCODE_ID: "${CHAINCODE_ID:-}", CHAINCODE_SERVER_ADDRESS: "0.0.0.0:9999" }

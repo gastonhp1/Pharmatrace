@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034 # variables used by the scripts that source this file
+# Shared settings and helpers for the network scripts. Source it, don't run it.
+#
+# The peer CLI decides who it is and which peer it talks to from CORE_PEER_* variables.
+# use_org sets them, so `use_org dist User2` means "act as the IoT gateway of the droguería".
+
+NETWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$NETWORK_DIR/bin:$PATH"
+export FABRIC_CFG_PATH="$NETWORK_DIR/config" # core.yaml for the peer CLI (downloaded by prereq)
+
+export CHANNEL=pharmatrace
+export CC_NAME=pharmatrace
+export CC_VERSION="${CC_VERSION:-0.1}"
+# Every write needs the regulator plus one org of the chain. Keys with state-based endorsement
+# (the batches) and private collections override this with their own policies.
+export CC_POLICY="AND('RegMSP.peer', OR('LabMSP.peer', 'DistMSP.peer', 'FarmaMSP.peer'))"
+
+ORGS_DIR="$NETWORK_DIR/organizations"
+ORDERER_DOMAIN=orderer.pharmatrace.ar
+export ORDERER_CA="$ORGS_DIR/ordererOrganizations/$ORDERER_DOMAIN/tlsca/tlsca.$ORDERER_DOMAIN-cert.pem"
+export ORDERER_ADDR=localhost:7050
+ORDERER_HOST=orderer0.$ORDERER_DOMAIN
+
+ALL_ORGS=(lab dist farma reg)
+
+declare -A MSP=([lab]=LabMSP [dist]=DistMSP [farma]=FarmaMSP [reg]=RegMSP)
+declare -A PORT=([lab]=7051 [dist]=8051 [farma]=9051 [reg]=10051)
+
+domain() { echo "$1.pharmatrace.ar"; }
+peer_host() { echo "peer0.$(domain "$1")"; }
+peer_tls_ca() { echo "$ORGS_DIR/peerOrganizations/$(domain "$1")/peers/$(peer_host "$1")/tls/ca.crt"; }
+
+# use_org <org> [Admin|User1|User2]
+use_org() {
+  local org=$1 user=${2:-Admin} d
+  d=$(domain "$org")
+  export CORE_PEER_TLS_ENABLED=true
+  export CORE_PEER_LOCALMSPID=${MSP[$org]}
+  export CORE_PEER_TLS_ROOTCERT_FILE
+  CORE_PEER_TLS_ROOTCERT_FILE=$(peer_tls_ca "$org")
+  export CORE_PEER_MSPCONFIGPATH="$ORGS_DIR/peerOrganizations/$d/users/$user@$d/msp"
+  export CORE_PEER_ADDRESS=localhost:${PORT[$org]}
+}
+
+# peer_args org... -> --peerAddresses/--tlsRootCertFiles for those orgs' peers. These are the
+# endorsers: which ones you pick is what the endorsement policy is about.
+peer_args() {
+  local org
+  for org in "$@"; do
+    printf -- '--peerAddresses localhost:%s --tlsRootCertFiles %s ' "${PORT[$org]}" "$(peer_tls_ca "$org")"
+  done
+}
+
+orderer_args() {
+  printf -- '-o %s --ordererTLSHostnameOverride %s --tls --cafile %s' "$ORDERER_ADDR" "$ORDERER_HOST" "$ORDERER_CA"
+}
+
+C_RESET='\033[0m' C_RED='\033[0;31m' C_GREEN='\033[0;32m' C_BLUE='\033[0;34m'
+info() { echo -e "${C_BLUE}==> $*${C_RESET}"; }
+ok() { echo -e "${C_GREEN}ok: $*${C_RESET}"; }
+fatal() { echo -e "${C_RED}error: $*${C_RESET}" >&2; exit 1; }
+
+# retry <attempts> <command...>: peers and orderers take a few seconds to be ready.
+retry() {
+  local n=$1 i
+  shift
+  for ((i = 1; i <= n; i++)); do
+    "$@" && return 0
+    sleep 3
+  done
+  return 1
+}

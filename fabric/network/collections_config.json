@@ -1,0 +1,26 @@
+[
+  {
+    "name": "termsManufacturerDistributor",
+    "policy": "OR('LabMSP.member', 'DistMSP.member')",
+    "requiredPeerCount": 0,
+    "maxPeerCount": 1,
+    "blockToLive": 0,
+    "memberOnlyRead": true,
+    "memberOnlyWrite": true,
+    "endorsementPolicy": {
+      "signaturePolicy": "AND('LabMSP.peer', 'DistMSP.peer')"
+    }
+  },
+  {
+    "name": "termsDistributorPharmacy",
+    "policy": "OR('DistMSP.member', 'FarmaMSP.member')",
+    "requiredPeerCount": 0,
+    "maxPeerCount": 1,
+    "blockToLive": 0,
+    "memberOnlyRead": true,
+    "memberOnlyWrite": true,
+    "endorsementPolicy": {
+      "signaturePolicy": "AND('DistMSP.peer', 'FarmaMSP.peer')"
+    }
+  }
+]
