@@ -1,0 +1,144 @@
+# Channel configuration: who is in the channel, what each org can do, and how blocks are ordered.
+# configtxgen turns the PharmaTraceChannel profile into the genesis block of the channel.
+
+Organizations:
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: organizations/ordererOrganizations/orderer.pharmatrace.ar/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('OrdererMSP.member')" }
+      Writers: { Type: Signature, Rule: "OR('OrdererMSP.member')" }
+      Admins: { Type: Signature, Rule: "OR('OrdererMSP.admin')" }
+    OrdererEndpoints:
+      - orderer0.orderer.pharmatrace.ar:7050
+      - orderer1.orderer.pharmatrace.ar:8050
+      - orderer2.orderer.pharmatrace.ar:9050
+
+  - &Lab
+    Name: LabMSP
+    ID: LabMSP
+    MSPDir: organizations/peerOrganizations/lab.pharmatrace.ar/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('LabMSP.admin', 'LabMSP.peer', 'LabMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('LabMSP.admin', 'LabMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('LabMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('LabMSP.peer')" }
+    AnchorPeers:
+      - Host: peer0.lab.pharmatrace.ar
+        Port: 7051
+
+  - &Dist
+    Name: DistMSP
+    ID: DistMSP
+    MSPDir: organizations/peerOrganizations/dist.pharmatrace.ar/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('DistMSP.admin', 'DistMSP.peer', 'DistMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('DistMSP.admin', 'DistMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('DistMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('DistMSP.peer')" }
+    AnchorPeers:
+      - Host: peer0.dist.pharmatrace.ar
+        Port: 8051
+
+  - &Farma
+    Name: FarmaMSP
+    ID: FarmaMSP
+    MSPDir: organizations/peerOrganizations/farma.pharmatrace.ar/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('FarmaMSP.admin', 'FarmaMSP.peer', 'FarmaMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('FarmaMSP.admin', 'FarmaMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('FarmaMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('FarmaMSP.peer')" }
+    AnchorPeers:
+      - Host: peer0.farma.pharmatrace.ar
+        Port: 9051
+
+  - &Reg
+    Name: RegMSP
+    ID: RegMSP
+    MSPDir: organizations/peerOrganizations/reg.pharmatrace.ar/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('RegMSP.admin', 'RegMSP.peer', 'RegMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('RegMSP.admin', 'RegMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('RegMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('RegMSP.peer')" }
+    AnchorPeers:
+      - Host: peer0.reg.pharmatrace.ar
+        Port: 10051
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+    # A chaincode definition is committed when a majority of orgs (3 of 4) approved it.
+    LifecycleEndorsement: { Type: ImplicitMeta, Rule: "MAJORITY Endorsement" }
+    # Default endorsement policy for chaincodes that do not set their own. PharmaTrace sets its own
+    # (see CC_POLICY in network.sh).
+    Endorsement: { Type: ImplicitMeta, Rule: "MAJORITY Endorsement" }
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+    BlockValidation: { Type: ImplicitMeta, Rule: "ANY Writers" }
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  # Three Raft orderers: the channel keeps ordering with one of them down (2 of 3 is a quorum).
+  PharmaTraceChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      OrdererType: etcdraft
+      EtcdRaft:
+        Consenters:
+          - Host: orderer0.orderer.pharmatrace.ar
+            Port: 7050
+            ClientTLSCert: organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer0.orderer.pharmatrace.ar/tls/server.crt
+            ServerTLSCert: organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer0.orderer.pharmatrace.ar/tls/server.crt
+          - Host: orderer1.orderer.pharmatrace.ar
+            Port: 8050
+            ClientTLSCert: organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer1.orderer.pharmatrace.ar/tls/server.crt
+            ServerTLSCert: organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer1.orderer.pharmatrace.ar/tls/server.crt
+          - Host: orderer2.orderer.pharmatrace.ar
+            Port: 9050
+            ClientTLSCert: organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer2.orderer.pharmatrace.ar/tls/server.crt
+            ServerTLSCert: organizations/ordererOrganizations/orderer.pharmatrace.ar/orderers/orderer2.orderer.pharmatrace.ar/tls/server.crt
+      Organizations:
+        - *OrdererOrg
+      Capabilities: *OrdererCapabilities
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *Lab
+        - *Dist
+        - *Farma
+        - *Reg
+      Capabilities: *ApplicationCapabilities
