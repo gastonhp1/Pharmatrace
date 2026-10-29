@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { ethers } = require("ethers");
+const { toHex, fromHex } = require("../lib/hex");
 
 const reading = require("../iot/reading");
 const { buildTree, verifyProof } = require("../iot/merkle");
@@ -19,18 +19,15 @@ const VECTOR = {
     reading: { ts: 1800000000, seq: 7, tempCenti: 450, humCenti: 5500, flags: 0x05, latE5: -3460000, lonE5: -5840000 },
     hex: "6b49d2000000000701c2157c05ffcb3460ffa6e380",
     sha256: "43ad8f8f0c31a6e3f656767b2bf00e225356013dc85e71f562b59a015ac0c455",
-    keccak: "0xd9660574558f738b306ff80d9fb150ab4ca32763de0c5b746102f0f4d4bdb1a4",
 };
 
 // Device side: a P-256 key and a signer that works like the secure element (SHA-256 + raw r||s).
 function newDevice() {
     const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
     const jwk = publicKey.export({ format: "jwk" });
-    const pubKey = ethers.hexlify(
-        Buffer.concat([Buffer.from(jwk.x, "base64url"), Buffer.from(jwk.y, "base64url")])
-    );
+    const pubKey = toHex(Buffer.concat([Buffer.from(jwk.x, "base64url"), Buffer.from(jwk.y, "base64url")]));
     const sign = (payload) =>
-        ethers.hexlify(crypto.sign("sha256", payload, { key: privateKey, dsaEncoding: "ieee-p1363" }));
+        toHex(crypto.sign("sha256", payload, { key: privateKey, dsaEncoding: "ieee-p1363" }));
     return { pubKey, sign };
 }
 
@@ -45,7 +42,7 @@ function signed(device, fields) {
         lonE5: 0,
         ...fields,
     });
-    return { payload: ethers.hexlify(payload), signature: device.sign(payload) };
+    return { payload: toHex(payload), signature: device.sign(payload) };
 }
 
 describe("reading codec", () => {
@@ -69,7 +66,8 @@ describe("reading codec", () => {
         const buf = reading.encodeReading(VECTOR.reading);
         assert.equal(buf.toString("hex"), VECTOR.hex);
         assert.equal(crypto.createHash("sha256").update(buf).digest("hex"), VECTOR.sha256);
-        assert.equal(reading.leafHash(buf), VECTOR.keccak);
+        // The Merkle leaf is the same digest the device signs.
+        assert.equal(reading.leafHash(buf), `0x${VECTOR.sha256}`);
     });
 
     test("hexToBuffer checks length and characters", () => {
@@ -86,9 +84,9 @@ describe("signatures", () => {
         const device = newDevice();
         const other = newDevice();
         const payload = reading.encodeReading(VECTOR.reading);
-        const signature = Buffer.from(ethers.getBytes(device.sign(payload)));
-        const key = reading.publicKeyFromRaw(Buffer.from(ethers.getBytes(device.pubKey)));
-        const otherKey = reading.publicKeyFromRaw(Buffer.from(ethers.getBytes(other.pubKey)));
+        const signature = fromHex(device.sign(payload));
+        const key = reading.publicKeyFromRaw(fromHex(device.pubKey));
+        const otherKey = reading.publicKeyFromRaw(fromHex(other.pubKey));
 
         assert.equal(reading.verifySignature(key, payload, signature), true);
         assert.equal(reading.verifySignature(otherKey, payload, signature), false);
@@ -101,7 +99,8 @@ describe("signatures", () => {
 });
 
 describe("merkle", () => {
-    const leavesOf = (n) => Array.from({ length: n }, (_, i) => ethers.keccak256(ethers.toBeHex(i + 1, 4)));
+    const leavesOf = (n) =>
+        Array.from({ length: n }, (_, i) => toHex(crypto.createHash("sha256").update(String(i + 1)).digest()));
 
     test("every proof verifies, for trees of any size", () => {
         for (let n = 1; n <= 17; n++) {
@@ -124,7 +123,7 @@ describe("merkle", () => {
         const leaves = leavesOf(6);
         const tree = buildTree(leaves);
         assert.equal(verifyProof(leaves[0], tree.proof(1), tree.root), false);
-        assert.equal(verifyProof(ethers.keccak256("0x99"), tree.proof(1), tree.root), false);
+        assert.equal(verifyProof(toHex(crypto.createHash("sha256").update("99").digest()), tree.proof(1), tree.root), false);
     });
 
     test("rejects empty trees and out-of-range indexes", () => {
@@ -191,9 +190,9 @@ describe("ingest", () => {
 
     test("a temperature edited after signing fails verification", async () => {
         const original = signed(device, { seq: 1, ts: 1000, tempCenti: 900 });
-        const payload = Buffer.from(ethers.getBytes(original.payload));
+        const payload = fromHex(original.payload);
         payload.writeInt16BE(500, 8); // "fix" the excursion
-        const result = await ingest("VAL-001", [{ ...original, payload: ethers.hexlify(payload) }]);
+        const result = await ingest("VAL-001", [{ ...original, payload: toHex(payload) }]);
 
         assert.equal(result.accepted, 0);
         assert.equal(result.rejected[0].reason, "Invalid signature");
@@ -290,7 +289,7 @@ describe("windows", () => {
             lonE5: 0,
             ...fields,
         });
-        return { seq: fields.seq, ts: fields.ts, payload: ethers.hexlify(payload) };
+        return { seq: fields.seq, ts: fields.ts, payload: toHex(payload) };
     };
 
     test("an in-range window has no excursion", () => {
@@ -344,7 +343,7 @@ describe("windows", () => {
         const records = [1, 2, 3].map((n) => record({ seq: n, ts: 1000 + n * 60 }));
         const { window, leaves } = buildWindow(records, POLICY, 60);
         assert.equal(window.root, buildTree(leaves).root);
-        assert.equal(leaves[0], reading.leafHash(Buffer.from(ethers.getBytes(records[0].payload))));
+        assert.equal(leaves[0], reading.leafHash(fromHex(records[0].payload)));
     });
 
     test("events are the rising edges of the flags", () => {
@@ -359,9 +358,9 @@ describe("windows", () => {
         assert.deepEqual(
             findEvents(records, 0, records.length).map((e) => [e.kind, e.ts]),
             [
-                ["LidOpened", 1060],
-                ["LidOpened", 1240],
-                ["SealBroken", 1240],
+                ["LID_OPENED", 1060],
+                ["LID_OPENED", 1240],
+                ["SEAL_BROKEN", 1240],
             ]
         );
     });

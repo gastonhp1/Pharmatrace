@@ -1,4 +1,4 @@
-const { ethers } = require("ethers");
+const { fromHex } = require("../lib/hex");
 const {
     FLAG_LID_OPENED,
     FLAG_SHOCK,
@@ -8,22 +8,22 @@ const {
 } = require("./reading");
 const { buildTree } = require("./merkle");
 
-// EventKind enum of ColdChainMonitor.
+// Device events, named as the chaincode's ReportDeviceEvent expects them.
 const EVENT_KINDS = [
-    { name: "LidOpened", index: 0, flag: FLAG_LID_OPENED },
-    { name: "Shock", index: 1, flag: FLAG_SHOCK },
-    { name: "SealBroken", index: 2, flag: FLAG_SEAL_BROKEN },
+    { name: "LID_OPENED", flag: FLAG_LID_OPENED },
+    { name: "SHOCK", flag: FLAG_SHOCK },
+    { name: "SEAL_BROKEN", flag: FLAG_SEAL_BROKEN },
 ];
 
-const payloadOf = (record) => Buffer.from(ethers.getBytes(record.payload));
+const payloadOf = (record) => fromHex(record.payload);
 
-// Builds the window ColdChainMonitor.anchorReadings expects from a run of stored readings.
+// Builds the window the chaincode's AnchorWindow expects from a run of stored readings.
 //
 // Time outside the range is measured sample-and-hold: a reading out of range counts until the
 // next reading. The last reading of the window has no next one yet, so it counts
 // `sampleSeconds` (the device's nominal period). That keeps every window self-contained, and
 // guarantees that a window with a temperature outside the range always reports some time
-// outside it, which is what the contract checks.
+// outside it, which is what the chaincode checks.
 //
 // policy: { minTemp, maxTemp } in hundredths of a degree, as numbers.
 function buildWindow(records, policy, sampleSeconds) {
@@ -76,7 +76,6 @@ function findEvents(records, from, to) {
             if (reading.flags & kind.flag && !(previousFlags & kind.flag)) {
                 events.push({
                     kind: kind.name,
-                    kindIndex: kind.index,
                     ts: reading.ts,
                     payloadHash: leafHash(payloadOf(records[i])),
                 });

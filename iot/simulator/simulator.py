@@ -47,7 +47,7 @@ def sign_payload(private_key, payload):
 
 
 def public_key_hex(private_key):
-    """The 64 bytes X || Y that DeviceRegistry stores, as 0x-prefixed hex."""
+    """The 64 bytes X || Y that the chaincode stores for the device (RegisterDevice), as 0x-prefixed hex."""
     numbers = private_key.public_key().public_numbers()
     return "0x" + (numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big")).hex()
 
@@ -156,7 +156,7 @@ def cmd_keygen(args):
     existed = os.path.exists(args.key)
     key = load_or_create_key(args.key)
     print(f"{'Using existing' if existed else 'Created'} key: {args.key}")
-    print(f"Public key (register it in DeviceRegistry): {public_key_hex(key)}")
+    print(f"Public key (register it with POST /api/iot/devices): {public_key_hex(key)}")
 
 
 def cmd_run(args):

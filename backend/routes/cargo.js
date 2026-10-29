@@ -1,73 +1,28 @@
 const express = require("express");
-const router = express.Router();
-const { createCargo, getCargoInfo, transferCargo, markCargoDelivered } = require("../services/cargoService");
-const { sendError } = require("../utils/errors");
-const { requireString, requireAddress, requireState } = require("../utils/validate");
+const { requireString, requireStringArray } = require("../utils/validate");
+const { handle } = require("./batches");
 
-const isNonEmptyString = (value) => typeof value === "string" && value.trim() !== "";
+// /api/cargo
+function cargoRoutes(pharma) {
+    const router = express.Router();
 
-// 🆕 Crear un nuevo cargamento
-router.post("/create", async (req, res) => {
-    const { cargoId, batchIds } = req.body || {};
+    // { cargoId, batchIds[] }: batches of one owner that will travel together
+    router.post(
+        "/",
+        handle("Error creating cargo", (req) => {
+            const { cargoId, batchIds } = req.body || {};
+            return pharma.createCargo(requireString(cargoId, "cargoId"), requireStringArray(batchIds, "batchIds"));
+        })
+    );
+    router.get("/:cargoId", handle("Error reading cargo", (req) => pharma.getCargo(req.params.cargoId)));
+    router.post(
+        "/:cargoId/dispatch",
+        handle("Error dispatching cargo", (req) => pharma.dispatchCargo(req.params.cargoId, requireString((req.body || {}).to, "to")))
+    );
+    router.post("/:cargoId/receive", handle("Error receiving cargo", (req) => pharma.receiveCargo(req.params.cargoId)));
+    router.post("/:cargoId/dissolve", handle("Error dissolving cargo", (req) => pharma.dissolveCargo(req.params.cargoId)));
 
-    if (
-        !isNonEmptyString(cargoId) ||
-        !Array.isArray(batchIds) ||
-        batchIds.length === 0 ||
-        !batchIds.every(isNonEmptyString)
-    ) {
-        return res.status(400).json({ error: "Missing or invalid cargoId or batchIds" });
-    }
+    return router;
+}
 
-    try {
-        const result = await createCargo(cargoId, batchIds);
-        res.json(result);
-    } catch (err) {
-        sendError(res, err, "Error creating cargo");
-    }
-});
-
-// 🔍 Obtener info de un cargamento
-router.get("/:cargoId", async (req, res) => {
-    const { cargoId } = req.params;
-
-    try {
-        const result = await getCargoInfo(cargoId);
-        res.json(result);
-    } catch (err) {
-        sendError(res, err, "Error getting cargo info");
-    }
-});
-
-// 🚚 Transferir un cargamento a otro actor
-router.post("/transfer", async (req, res) => {
-    try {
-        const { cargoId, toAddress, newState } = req.body || {};
-        const result = await transferCargo(
-            requireString(cargoId, "cargoId"),
-            requireAddress(toAddress, "toAddress"),
-            requireState(newState)
-        );
-        res.json(result);
-    } catch (err) {
-        sendError(res, err, "Error transferring cargo");
-    }
-});
-
-// ✅ Marcar como entregado
-router.post("/deliver", async (req, res) => {
-    const { cargoId } = req.body || {};
-
-    if (!isNonEmptyString(cargoId)) {
-        return res.status(400).json({ error: "Missing cargoId" });
-    }
-
-    try {
-        const result = await markCargoDelivered(cargoId);
-        res.json(result);
-    } catch (err) {
-        sendError(res, err, "Error marking delivered");
-    }
-});
-
-module.exports = router;
+module.exports = { cargoRoutes };

@@ -9,14 +9,15 @@ function safeEqual(a, b) {
     return crypto.timingSafeEqual(ha, hb);
 }
 
-// Protects every route that is not a read (the ones that sign transactions with the actors'
-// keys) with a shared API key sent in the `x-api-key` header.
+// Protects every route that is not a read (the ones that submit transactions with the orgs'
+// identities) with a shared API key sent in the `x-api-key` header. With { reads: true } it also
+// protects reads, for data that is not public (the private commercial terms).
 //
 // It fails closed: with no API_KEY configured, writes are refused (503) unless
 // AUTH_DISABLED=true is set explicitly (local development).
-function requireApiKey(env = process.env) {
+function requireApiKey(env = process.env, { reads = false } = {}) {
     return function apiKeyMiddleware(req, res, next) {
-        if (READ_METHODS.has(req.method)) return next();
+        if (!reads && READ_METHODS.has(req.method)) return next();
         if (env.AUTH_DISABLED === "true") return next();
 
         if (!env.API_KEY) {

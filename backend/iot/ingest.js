@@ -1,4 +1,4 @@
-const { ethers } = require("ethers");
+const { toHex } = require("../lib/hex");
 const { ApiError } = require("../utils/errors");
 const {
     READING_SIZE,
@@ -16,6 +16,7 @@ const MAX_READINGS_PER_REQUEST = 200;
 //
 //   store  ReadingStore (see store.js)
 //   chain  { activeCargoOf(deviceId) -> cargoId | "", getDevice(deviceId) -> device | null }
+//          (read from the ledger: the chaincode's GetDevice)
 //          where device is { pubKey: hex, calibrationExpiry: number, active: boolean }
 //   now    () -> unix seconds (injectable for tests)
 //
@@ -62,7 +63,7 @@ function createIngest({ store, chain, now = () => Math.floor(Date.now() / 1000),
             if (!verifySignature(publicKey, payload, signature)) return reject("Invalid signature");
 
             const reading = decodeReading(payload);
-            const payloadHex = ethers.hexlify(payload);
+            const payloadHex = toHex(payload);
 
             if (bySeq.has(reading.seq)) {
                 if (bySeq.get(reading.seq) === payloadHex) {
@@ -80,7 +81,7 @@ function createIngest({ store, chain, now = () => Math.floor(Date.now() / 1000),
                 seq: reading.seq,
                 ts: reading.ts,
                 payload: payloadHex,
-                signature: ethers.hexlify(signature),
+                signature: toHex(signature),
                 receivedAt: now(),
             };
             store.append(cargoId, record);

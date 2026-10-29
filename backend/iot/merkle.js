@@ -1,13 +1,14 @@
-const { ethers } = require("ethers");
+const crypto = require("crypto");
+const { toHex, fromHex } = require("../lib/hex");
 
-// Merkle tree compatible with ColdChainMonitor.verifyReading: sibling pairs are hashed in
-// sorted order, so a proof is just the list of siblings (no left/right flags). When a level has
-// an odd number of nodes the last one is carried up unchanged, without duplicating it.
+// SHA-256 Merkle tree, the same one the chaincode's VerifyReading checks: sibling pairs are
+// hashed in sorted order, so a proof is just the list of siblings (no left/right flags). When a
+// level has an odd number of nodes the last one is carried up unchanged, without duplicating it.
 
 function hashPair(a, b) {
-    return BigInt(a) <= BigInt(b)
-        ? ethers.keccak256(ethers.concat([a, b]))
-        : ethers.keccak256(ethers.concat([b, a]));
+    const [x, y] = [fromHex(a), fromHex(b)];
+    const pair = Buffer.compare(x, y) <= 0 ? Buffer.concat([x, y]) : Buffer.concat([y, x]);
+    return toHex(crypto.createHash("sha256").update(pair).digest());
 }
 
 // leaves: array of 0x-prefixed 32-byte hashes. Returns { root, proof(index) }.
