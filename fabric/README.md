@@ -58,8 +58,10 @@ entrega y libera, y `DissolveCargo` deshace uno que no salió (por ejemplo, para
 recall).
 
 **Cadena de frío** (`contract/coldchain.go`). Cada org registra sus valijas con su clave pública
-(`RegisterDevice`); el regulador fija las políticas y autoriza a los gateways IoT por certificado
-(`RegisterAttestor`). El gateway ancla una raíz de Merkle por ventana de lecturas, con mín/máx y
+(`RegisterDevice`); el regulador fija las políticas y acepta los gateways IoT de una org
+(`AuthorizeGatewayOrg`). Es gateway la identidad cuyo certificado trae `pharmatrace.role=iot-gateway`
+(control de acceso por atributo, ver [`docs/PKI.md`](docs/PKI.md)). El gateway ancla una raíz de
+Merkle por ventana de lecturas, con mín/máx y
 segundos fuera de rango, y el chaincode da el veredicto del cargamento (`MONITORING`, `COMPLIANT`
 o `COMPROMISED`). `VerifyReading` comprueba una prueba de Merkle contra una raíz anclada. Detalle
 en [`iot/docs/ARCHITECTURE.md`](../iot/docs/ARCHITECTURE.md).

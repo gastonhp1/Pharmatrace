@@ -84,6 +84,9 @@ jobs:
       - run: ./network.sh api
       # Deploying again must upgrade in place (sequence 2) and keep the data.
       - run: CC_VERSION=0.2 ./network.sh deploy && ./network.sh smoke
+      # The PKI runbook: renew a peer, rotate an orderer's TLS certificate, revoke a gateway.
+      # Last, because it revokes the gateway the other tests use.
+      - run: bash scripts/pki-test.sh
       - name: Show the failure on the PR
         if: failure()
         env: { BASH_ENV: "" }

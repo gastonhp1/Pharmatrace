@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -246,12 +248,26 @@ func (it *historyIterator) Next() (*queryresult.KeyModification, error) {
 // fakeIdentity is the client identity of a transaction.
 type fakeIdentity struct {
 	cid.ClientIdentity
-	msp string
-	id  string
+	msp   string
+	id    string
+	attrs map[string]string
 }
 
 func (f fakeIdentity) GetMSPID() (string, error) { return f.msp, nil }
 func (f fakeIdentity) GetID() (string, error)    { return f.id, nil }
+func (f fakeIdentity) GetAttributeValue(name string) (string, bool, error) {
+	v, ok := f.attrs[name]
+	return v, ok, nil
+}
+
+// Users whose name starts with "iot-gateway" get the IoT gateway role in their certificate, as
+// their org's CA would issue it.
+func attrsFor(user string) map[string]string {
+	if strings.HasPrefix(user, "iot-gateway") {
+		return map[string]string{AttrRole: RoleIoTGateway}
+	}
+	return map[string]string{}
+}
 
 // tx runs one chaincode function as a member of an org and commits it if it succeeds.
 type harness struct {
@@ -273,7 +289,7 @@ func (h *harness) as(msp, user string, fn func(ctx contractapi.TransactionContex
 	}
 	ctx := &contractapi.TransactionContext{}
 	ctx.SetStub(stub)
-	ctx.SetClientIdentity(fakeIdentity{msp: msp, id: "x509::CN=" + user + "::CN=ca." + msp})
+	ctx.SetClientIdentity(fakeIdentity{msp: msp, id: "x509::CN=" + user + "::CN=ca." + msp, attrs: attrsFor(user)})
 	err := fn(ctx)
 	if err == nil {
 		stub.commit()
@@ -305,7 +321,7 @@ func (h *harness) fails(want string, msp, user string, fn func(ctx contractapi.T
 
 // serializedIdentity builds what a real client sends as the creator of a transaction: its MSP ID
 // and a PEM X.509 certificate, as a protobuf.
-func serializedIdentity(t *testing.T, mspID, cn string) []byte {
+func serializedIdentity(t *testing.T, mspID, cn string, attrs map[string]string) []byte {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -316,6 +332,11 @@ func serializedIdentity(t *testing.T, mspID, cn string) []byte {
 		Subject:      pkix.Name{CommonName: cn},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
+	}
+	if len(attrs) > 0 {
+		// Fabric CA puts the attributes, as JSON, in this extension (see pkg/attrmgr).
+		value, _ := json.Marshal(map[string]map[string]string{"attrs": attrs})
+		tmpl.ExtraExtensions = []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 2, 3, 4, 5, 6, 7, 8, 1}, Value: value}}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {

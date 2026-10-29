@@ -16,7 +16,7 @@ const pharma = createPharmaService({ ledger, manufacturer: parseActor(env.MANUFA
 const iot = createIotService({
     ledger,
     store: new ReadingStore(env.IOT_DATA_DIR || path.join(__dirname, "data/iot")),
-    gateway: parseActor(env.IOT_GATEWAY_IDENTITY || "dist:User2"),
+    gateway: parseActor(env.IOT_GATEWAY_IDENTITY || "dist:IotGateway"),
     sampleSeconds: Number(env.IOT_SAMPLE_SECONDS) || 60,
     maxClockSkewSeconds: env.IOT_MAX_CLOCK_SKEW_SECONDS !== undefined ? Number(env.IOT_MAX_CLOCK_SKEW_SECONDS) : 30,
 });

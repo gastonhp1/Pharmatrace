@@ -192,7 +192,7 @@ describe("IoT gateway on the ledger", () => {
             ReportDeviceEvent: (args) => ({ ...monitoring, verdict: args[1] === "SEAL_BROKEN" ? "COMPROMISED" : "MONITORING" }),
         });
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "iot-"));
-        const iot = createIotService({ ledger: { evaluate: ledger.evaluate, submit: (a, f, args, o) => ledger.submit(a, f, args.map((x) => (typeof x === "string" ? x : JSON.stringify(x))), o) }, store: new ReadingStore(dir), gateway: { mspId: "DistMSP", user: "User2" }, now: () => 2000 });
+        const iot = createIotService({ ledger: { evaluate: ledger.evaluate, submit: (a, f, args, o) => ledger.submit(a, f, args.map((x) => (typeof x === "string" ? x : JSON.stringify(x))), o) }, store: new ReadingStore(dir), gateway: { mspId: "DistMSP", user: "IotGateway" }, now: () => 2000 });
 
         const upload = await iot.ingestReadings("V1", [
             valija.sign({ ts: 1000, seq: 1, tempCenti: 500 }),
@@ -208,7 +208,7 @@ describe("IoT gateway on the ledger", () => {
         assert.deepEqual([result.anchored, result.anchorIndex, result.excursionSeconds, result.events], [3, 0, 60, 1]);
 
         const [anchor, event] = ledger.submits();
-        assert.deepEqual([anchor.actor, anchor.user, anchor.fn, anchor.endorsingOrgs], ["DistMSP", "User2", "AnchorWindow", ["DistMSP", "RegMSP"]]);
+        assert.deepEqual([anchor.actor, anchor.user, anchor.fn, anchor.endorsingOrgs], ["DistMSP", "IotGateway", "AnchorWindow", ["DistMSP", "RegMSP"]]);
         const window = JSON.parse(anchor.args[1]);
         assert.deepEqual([window.count, window.from, window.to, window.minTemp, window.maxTemp], [3, 1000, 1120, 400, 950]);
         assert.deepEqual([event.fn, event.args[1], event.args[2]], ["ReportDeviceEvent", "LID_OPENED", "1060"]);

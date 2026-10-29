@@ -35,7 +35,7 @@ function settings(env = process.env) {
 
 const orgKeyOf = (mspId) => Object.keys(ORGS).find((k) => ORGS[k].mspId === mspId);
 
-// "dist:User2" -> { mspId: "DistMSP", user: "User2" }
+// "dist:IotGateway" -> { mspId: "DistMSP", user: "IotGateway" }
 function parseActor(spec) {
     const [org, user] = String(spec).split(":");
     if (!ORGS[org]) throw new Error(`Unknown org "${org}" in "${spec}": use one of ${Object.keys(ORGS).join(", ")}`);

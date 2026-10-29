@@ -1,6 +1,7 @@
-# Local PharmaTrace network: 3 Raft orderers, one peer per org and, once deployed, one chaincode
-# container per peer (chaincode as a service). Started by ./network.sh, not by hand: the
-# certificates come from `./network.sh up` and CHAINCODE_ID from `./network.sh deploy`.
+# Local PharmaTrace network: one Fabric CA per org, 3 Raft orderers, one peer per org and, once
+# deployed, one chaincode container per peer (chaincode as a service). Started by ./network.sh, not
+# by hand: the certificates come from the CAs (scripts/pki.sh bootstrap, run by `./network.sh up`)
+# and CHAINCODE_ID from `./network.sh deploy`.
 
 name: pharmatrace
 
@@ -50,6 +51,19 @@ x-peer: &peer
   working_dir: /root
   networks: [pharmatrace]
 
+# One Fabric CA per organization. It issues both the identities (MSP) and the TLS certificates of
+# its org, and keeps its database and keys in a named volume. The bootstrap admin's password
+# comes from CA_ADMIN_SECRET, which ./network.sh generates (organizations/fabric-ca/admin.secret).
+x-ca: &ca
+  image: hyperledger/fabric-ca:${FABRIC_CA_VERSION:-1.5.22}
+  command: sh -c 'fabric-ca-server start -b "admin:$$CA_ADMIN_SECRET"'
+  networks: [pharmatrace]
+
+x-ca-env: &ca-env
+  FABRIC_CA_HOME: /etc/hyperledger/fabric-ca-server
+  FABRIC_CA_SERVER_TLS_ENABLED: "true"
+  CA_ADMIN_SECRET: ${CA_ADMIN_SECRET:-}
+
 x-chaincode: &chaincode
   image: pharmatrace-chaincode:${CHAINCODE_VERSION:-0.1}
   profiles: [chaincode]
@@ -61,6 +75,11 @@ networks:
     name: pharmatrace
 
 volumes:
+  ca-orderer: {}
+  ca-lab: {}
+  ca-dist: {}
+  ca-farma: {}
+  ca-reg: {}
   orderer0: {}
   orderer1: {}
   orderer2: {}
@@ -70,6 +89,67 @@ volumes:
   peer0-reg: {}
 
 services:
+  # ------------------------------------------------------------------ certificate authorities
+  ca.orderer.pharmatrace.ar:
+    <<: *ca
+    container_name: ca.orderer.pharmatrace.ar
+    environment:
+      <<: *ca-env
+      FABRIC_CA_SERVER_CA_NAME: ca-orderer
+      FABRIC_CA_SERVER_PORT: "11054"
+      FABRIC_CA_SERVER_CSR_CN: ca.orderer.pharmatrace.ar
+      FABRIC_CA_SERVER_CSR_HOSTS: ca.orderer.pharmatrace.ar,localhost,127.0.0.1
+    volumes: ["ca-orderer:/etc/hyperledger/fabric-ca-server"]
+    ports: ["11054:11054"]
+
+  ca.lab.pharmatrace.ar:
+    <<: *ca
+    container_name: ca.lab.pharmatrace.ar
+    environment:
+      <<: *ca-env
+      FABRIC_CA_SERVER_CA_NAME: ca-lab
+      FABRIC_CA_SERVER_PORT: "7054"
+      FABRIC_CA_SERVER_CSR_CN: ca.lab.pharmatrace.ar
+      FABRIC_CA_SERVER_CSR_HOSTS: ca.lab.pharmatrace.ar,localhost,127.0.0.1
+    volumes: ["ca-lab:/etc/hyperledger/fabric-ca-server"]
+    ports: ["7054:7054"]
+
+  ca.dist.pharmatrace.ar:
+    <<: *ca
+    container_name: ca.dist.pharmatrace.ar
+    environment:
+      <<: *ca-env
+      FABRIC_CA_SERVER_CA_NAME: ca-dist
+      FABRIC_CA_SERVER_PORT: "8054"
+      FABRIC_CA_SERVER_CSR_CN: ca.dist.pharmatrace.ar
+      FABRIC_CA_SERVER_CSR_HOSTS: ca.dist.pharmatrace.ar,localhost,127.0.0.1
+    volumes: ["ca-dist:/etc/hyperledger/fabric-ca-server"]
+    ports: ["8054:8054"]
+
+  ca.farma.pharmatrace.ar:
+    <<: *ca
+    container_name: ca.farma.pharmatrace.ar
+    environment:
+      <<: *ca-env
+      FABRIC_CA_SERVER_CA_NAME: ca-farma
+      FABRIC_CA_SERVER_PORT: "9054"
+      FABRIC_CA_SERVER_CSR_CN: ca.farma.pharmatrace.ar
+      FABRIC_CA_SERVER_CSR_HOSTS: ca.farma.pharmatrace.ar,localhost,127.0.0.1
+    volumes: ["ca-farma:/etc/hyperledger/fabric-ca-server"]
+    ports: ["9054:9054"]
+
+  ca.reg.pharmatrace.ar:
+    <<: *ca
+    container_name: ca.reg.pharmatrace.ar
+    environment:
+      <<: *ca-env
+      FABRIC_CA_SERVER_CA_NAME: ca-reg
+      FABRIC_CA_SERVER_PORT: "10054"
+      FABRIC_CA_SERVER_CSR_CN: ca.reg.pharmatrace.ar
+      FABRIC_CA_SERVER_CSR_HOSTS: ca.reg.pharmatrace.ar,localhost,127.0.0.1
+    volumes: ["ca-reg:/etc/hyperledger/fabric-ca-server"]
+    ports: ["10054:10054"]
+
   # ------------------------------------------------------------------ orderers (Raft)
   orderer0.orderer.pharmatrace.ar:
     <<: *orderer

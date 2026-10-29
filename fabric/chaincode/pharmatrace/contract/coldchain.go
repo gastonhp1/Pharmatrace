@@ -17,7 +17,9 @@ import (
 // window together with the numbers the chaincode needs to judge the window against the policy.
 //
 // Differences with the Solidity version:
-//   - Gateways are authorized by client certificate (RegisterAttestor) instead of by address.
+//   - A gateway is any identity whose certificate carries pharmatrace.role=iot-gateway (issued by
+//     its org's CA) from an org the regulator authorized (AuthorizeGatewayOrg), instead of a list
+//     of addresses. Rotating or adding a gateway is a CA operation; no transaction needed.
 //   - Each org registers its own valijas; the regulator sets the policies.
 //   - The Merkle tree uses SHA-256 instead of keccak256 (see iot/docs/READING_FORMAT.md).
 
@@ -152,24 +154,34 @@ func (c *PharmaTrace) GetColdChainPolicy(ctx contractapi.TransactionContextInter
 	return &policy, nil
 }
 
-// RegisterAttestor authorizes an IoT gateway identity to anchor readings. clientID is what
-// WhoAmI returns when called with the gateway's certificate.
-func (c *PharmaTrace) RegisterAttestor(ctx contractapi.TransactionContextInterface, mspID string, gatewayClientID string) error {
+// AuthorizeGatewayOrg makes the regulator accept the IoT gateways of an org: its identities whose
+// certificate has the attribute pharmatrace.role=iot-gateway.
+func (c *PharmaTrace) AuthorizeGatewayOrg(ctx contractapi.TransactionContextInterface, mspID string) (*GatewayOrg, error) {
 	if err := requireRegulator(ctx); err != nil {
-		return err
+		return nil, err
 	}
-	if strings.TrimSpace(mspID) == "" || strings.TrimSpace(gatewayClientID) == "" {
-		return invalid("mspID and gatewayClientID are required")
+	role, err := orgRole(ctx, mspID)
+	if err != nil {
+		return nil, err
 	}
-	return putJSON(ctx, objAttestor, []string{mspID, gatewayClientID}, Attestor{ClientID: gatewayClientID, MSPID: mspID})
+	if role == "" {
+		return nil, notFound("org %s is not registered", mspID)
+	}
+	now, err := txTimeString(ctx)
+	if err != nil {
+		return nil, err
+	}
+	g := &GatewayOrg{MSPID: mspID, AuthorizedAt: now}
+	return g, putJSON(ctx, objGatewayOrg, []string{mspID}, g)
 }
 
-// RevokeAttestor removes an IoT gateway identity.
-func (c *PharmaTrace) RevokeAttestor(ctx contractapi.TransactionContextInterface, mspID string, gatewayClientID string) error {
+// RevokeGatewayOrg stops accepting the IoT gateways of an org. To stop a single gateway, its org
+// revokes the certificate in its CA and publishes the CRL in the channel (see fabric/docs/PKI.md).
+func (c *PharmaTrace) RevokeGatewayOrg(ctx contractapi.TransactionContextInterface, mspID string) error {
 	if err := requireRegulator(ctx); err != nil {
 		return err
 	}
-	k, err := key(ctx, objAttestor, []string{mspID, gatewayClientID})
+	k, err := key(ctx, objGatewayOrg, []string{mspID})
 	if err != nil {
 		return err
 	}
@@ -452,17 +464,18 @@ func (c *PharmaTrace) openMonitoring(ctx contractapi.TransactionContextInterface
 	return m, policy, nil
 }
 
+// isAttestor: the certificate says iot-gateway and the regulator accepts gateways of its org.
 func isAttestor(ctx contractapi.TransactionContextInterface) (bool, error) {
+	role, err := clientRole(ctx)
+	if err != nil || role != RoleIoTGateway {
+		return false, err
+	}
 	msp, err := clientMSP(ctx)
 	if err != nil {
 		return false, err
 	}
-	id, err := clientID(ctx)
-	if err != nil {
-		return false, err
-	}
-	var a Attestor
-	return getJSON(ctx, objAttestor, []string{msp, id}, &a)
+	var g GatewayOrg
+	return getJSON(ctx, objGatewayOrg, []string{msp}, &g)
 }
 
 func requireAttestor(ctx contractapi.TransactionContextInterface) error {

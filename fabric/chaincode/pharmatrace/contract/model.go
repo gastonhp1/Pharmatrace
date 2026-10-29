@@ -45,7 +45,7 @@ const (
 	objOwnerIndex = "owner~batch"
 	objCargo      = "cargo"
 	objPolicy     = "coldpolicy"
-	objAttestor   = "attestor"
+	objGatewayOrg = "gatewayorg"
 	objDevice     = "device"
 	objMonitoring = "monitoring"
 )
@@ -181,10 +181,25 @@ type Monitoring struct {
 	Closed           bool          `json:"closed"`
 }
 
-// Attestor is an IoT gateway identity allowed to anchor readings.
-type Attestor struct {
+// Attribute-based access control: an org's CA puts this attribute in a certificate (fabric-ca-client
+// register --id.attrs 'pharmatrace.role=iot-gateway:ecert') to make that identity an IoT gateway.
+const (
+	AttrRole       = "pharmatrace.role"
+	RoleIoTGateway = "iot-gateway"
+)
+
+// Identity is who called, as the chaincode sees it: from the X.509 certificate of the client.
+type Identity struct {
 	ClientID string `json:"clientId"`
 	MSPID    string `json:"mspId"`
+	Role     string `json:"role"` // the pharmatrace.role attribute, "" if the certificate has none
+}
+
+// GatewayOrg is an org whose IoT gateways (identities with the iot-gateway role) the regulator
+// accepts.
+type GatewayOrg struct {
+	MSPID        string `json:"mspId"`
+	AuthorizedAt string `json:"authorizedAt"`
 }
 
 // Event payloads. Fabric keeps one event per transaction, so each function emits at most one.

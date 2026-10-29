@@ -24,7 +24,7 @@ Con la red levantada y el chaincode desplegado (`fabric/network/network.sh all`)
 export API=http://localhost:3001 KEY=<tu API_KEY>
 h=(-H "x-api-key: $KEY" -H 'content-type: application/json')
 
-# 1. Una sola vez: el regulador autoriza la identidad del gateway (IOT_GATEWAY_IDENTITY, por defecto dist:User2)
+# 1. Una sola vez: el regulador acepta los gateways de la org del gateway (IOT_GATEWAY_IDENTITY, por defecto dist:IotGateway)
 curl -X POST $API/api/iot/gateway/authorize "${h[@]}"
 
 # 2. Política (2–8 °C, hasta 30 min fuera de rango) y la clave de la valija
