@@ -25,7 +25,9 @@ query() {
 register_batch() { call RegisterBatch "$1" 07791234567890 "Insulina NPH 100 UI/ml" L-PKI 2028-01-31; }
 
 step "1. Certificate status (soonest expiry first)"
-pki status | head -12
+# (to a file first: head closing the pipe early would kill `pki status` with SIGPIPE under pipefail)
+pki status >"/tmp/pki-status-$RUN.txt"
+head -12 "/tmp/pki-status-$RUN.txt"
 
 step "2. Renew peer0.dist: new keys and certificates, restart, and it still endorses"
 OLD_SERIAL=$(openssl x509 -in "$ORGS_DIR/peerOrganizations/dist.pharmatrace.ar/peers/peer0.dist.pharmatrace.ar/msp/signcerts/cert.pem" -noout -serial)
