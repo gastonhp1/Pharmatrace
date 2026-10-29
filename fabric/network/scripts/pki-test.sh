@@ -20,7 +20,7 @@ invoke() {
 }
 query() {
   use_org "$1" "$2"
-  peer chaincode query -C "$CHANNEL" -n "$CC_NAME" -c "$3" 2>&1
+  peer chaincode query -C "$CHANNEL" -n "$CC_NAME" -c "$3"
 }
 register_batch() { call RegisterBatch "$1" 07791234567890 "Insulina NPH 100 UI/ml" L-PKI 2028-01-31; }
 
@@ -60,7 +60,7 @@ expect "$(query dist IotGateway "$(call IsAttestor)")" true "IotGateway before t
 pki revoke dist IotGateway
 # The peers apply the new CRL when they commit the config block.
 for _ in $(seq 1 10); do
-  out=$(query dist IotGateway "$(call IsAttestor)" || true)
+  out=$(query dist IotGateway "$(call IsAttestor)" 2>&1 | tail -1 || true)
   [[ "$out" != "true" ]] && break
   sleep 2
 done
