@@ -75,7 +75,8 @@ runbook (see [`fabric/docs/PKI.md`](fabric/docs/PKI.md)). `./network.sh down` re
 
 ## API
 
-Reads (`GET`) are public, except prices. Everything else needs the `x-api-key` header with `API_KEY`.
+Reads (`GET`) are public, except prices. Everything else needs the `x-api-key` header with `API_KEY`, except
+`/api/auth` and `/api/box`, which use per-user sessions (the mobile app).
 
 The API is **custodial**: it holds one identity per org (the certificates the network issues) and acts with the
 right one. It dispatches as the batch owner, receives as the recipient and recalls as the regulator. In a real
@@ -101,13 +102,14 @@ consortium each org runs its own API with only its own identity.
 | POST | `/api/orgs` | `mspId`, `role` (`manufacturer`, `distributor`, `pharmacy`) |
 | GET | `/api/orgs/:msp` · `/api/orgs/:msp/batches` | |
 | | `/api/iot/...` | Cases, policies, readings, anchoring and proofs: see [`iot/`](iot/README.md) |
+| | `/api/auth/...` · `/api/box/...` | User login (Bearer session) and PharmaBox unlock tokens for the mobile app: see [`iot/docs/BOX_UNLOCK.md`](iot/docs/BOX_UNLOCK.md) |
 
 Errors are always `{"error": "<reason>"}`. The chaincode tags its errors with a code and the API maps it:
 
 | HTTP | Chaincode code | Examples |
 | --- | --- | --- |
 | 400 | `INVALID` | Malformed GTIN or date, negative price |
-| 401 | | Missing or wrong `x-api-key` |
+| 401 | | Missing or wrong `x-api-key`, or missing/expired session on `/api/box` |
 | 403 | `FORBIDDEN` | Not the owner, not the regulator, not a member of the private collection |
 | 404 | `NOT_FOUND` | The batch, cargo or org does not exist |
 | 409 | `CONFLICT` | Already exists, the batch travels in a cargo, the recipient does not have the next role, another transaction touched the same data (MVCC) |
