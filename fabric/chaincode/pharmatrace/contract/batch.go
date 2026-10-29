@@ -51,9 +51,9 @@ func (c *PharmaTrace) GetOrg(ctx contractapi.TransactionContextInterface, mspID 
 	return &org, nil
 }
 
-// WhoAmI returns the caller's MSP ID and client ID. The client ID is what RegisterAttestor needs
-// to authorize an IoT gateway.
-func (c *PharmaTrace) WhoAmI(ctx contractapi.TransactionContextInterface) (*Attestor, error) {
+// WhoAmI returns the caller's MSP ID, client ID and pharmatrace.role attribute, straight from its
+// certificate. Handy to check what a newly issued certificate carries.
+func (c *PharmaTrace) WhoAmI(ctx contractapi.TransactionContextInterface) (*Identity, error) {
 	msp, err := clientMSP(ctx)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,11 @@ func (c *PharmaTrace) WhoAmI(ctx contractapi.TransactionContextInterface) (*Atte
 	if err != nil {
 		return nil, err
 	}
-	return &Attestor{ClientID: id, MSPID: msp}, nil
+	role, err := clientRole(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &Identity{ClientID: id, MSPID: msp, Role: role}, nil
 }
 
 // ================================================================= batches

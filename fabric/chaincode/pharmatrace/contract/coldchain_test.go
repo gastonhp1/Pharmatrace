@@ -9,8 +9,6 @@ import (
 
 const gatewayUser = "iot-gateway"
 
-func gatewayID() string { return "x509::CN=" + gatewayUser + "::CN=ca." + dist }
-
 var testPubKey = strings.Repeat("ab", 64)
 
 // coldSetup leaves cargo C1 (batch B1) open at the lab, a 2-8 C policy that allows 30 minutes out
@@ -21,7 +19,7 @@ func coldSetup(t *testing.T) *harness {
 	h.register("B1")
 	h.createCargo(lab, "C1", "B1")
 	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.SetColdChainPolicy(ctx, "2-8C", 200, 800, 1800) })
-	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.RegisterAttestor(ctx, dist, gatewayID()) })
+	h.must(reg, "admin", func(ctx ctxT) error { _, err := h.cc.AuthorizeGatewayOrg(ctx, dist); return err })
 	h.registerDevice("valija-01")
 	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "C1", "valija-01", "2-8C"); return err })
 	return h
@@ -82,7 +80,8 @@ func TestPolicyRules(t *testing.T) {
 	h.fails("invalid temperature range", reg, "admin", func(ctx ctxT) error { return h.cc.SetColdChainPolicy(ctx, "p", 800, 200, 0) })
 	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.SetColdChainPolicy(ctx, "p", 200, 800, 0) })
 	h.fails("already exists", reg, "admin", func(ctx ctxT) error { return h.cc.SetColdChainPolicy(ctx, "p", 100, 900, 60) })
-	h.fails("only the regulator", dist, "admin", func(ctx ctxT) error { return h.cc.RegisterAttestor(ctx, dist, gatewayID()) })
+	h.fails("only the regulator", dist, "admin", func(ctx ctxT) error { _, err := h.cc.AuthorizeGatewayOrg(ctx, dist); return err })
+	h.fails("NOT_FOUND", reg, "admin", func(ctx ctxT) error { _, err := h.cc.AuthorizeGatewayOrg(ctx, "NopeMSP"); return err })
 }
 
 func TestStartMonitoringRules(t *testing.T) {
@@ -257,11 +256,30 @@ func TestVerifyReading(t *testing.T) {
 	})
 }
 
-func TestRevokedAttestor(t *testing.T) {
+func TestGatewayAuthorization(t *testing.T) {
 	h := coldSetup(t)
-	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.RevokeAttestor(ctx, dist, gatewayID()) })
 	now := h.l.now.Unix()
-	if _, _, err := h.anchor(h.window(now-60, now, 300, 500, 0)); err == nil {
-		t.Fatal("a revoked gateway anchored readings")
+	anchorAs := func(msp, user string) error {
+		_, err := h.as(msp, user, func(ctx ctxT) error {
+			_, err := h.cc.AnchorWindow(ctx, "C1", h.window(now-60, now, 300, 500, 0))
+			return err
+		})
+		return err
+	}
+	// The role without an authorized org is not enough...
+	if err := anchorAs(lab, "iot-gateway-lab"); err == nil {
+		t.Fatal("a gateway of an org the regulator did not authorize anchored readings")
+	}
+	// ...and neither is the org without the role in the certificate.
+	if err := anchorAs(dist, "user1"); err == nil {
+		t.Fatal("a dist user without the iot-gateway role anchored readings")
+	}
+	// Any certificate with the role works: a second gateway needs no transaction, just the CA.
+	if err := anchorAs(dist, "iot-gateway-2"); err != nil {
+		t.Fatalf("a second gateway of DistMSP: %v", err)
+	}
+	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.RevokeGatewayOrg(ctx, dist) })
+	if err := anchorAs(dist, "iot-gateway"); err == nil {
+		t.Fatal("a gateway anchored after its org was revoked")
 	}
 }

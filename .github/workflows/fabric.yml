@@ -29,7 +29,7 @@ jobs:
       - name: Keep a log for the PR annotations
         working-directory: .
         run: |
-          echo 'exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1' > "$RUNNER_TEMP/tee.sh"
+          echo '[ -n "${JOB_LOG_TEE:-}" ] || { export JOB_LOG_TEE=1; exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1; }' > "$RUNNER_TEMP/tee.sh"
           echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
@@ -59,7 +59,7 @@ jobs:
       - name: Keep a log for the PR annotations
         working-directory: .
         run: |
-          echo 'exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1' > "$RUNNER_TEMP/tee.sh"
+          echo '[ -n "${JOB_LOG_TEE:-}" ] || { export JOB_LOG_TEE=1; exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1; }' > "$RUNNER_TEMP/tee.sh"
           echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
       - run: shellcheck -x network.sh scripts/*.sh
       - run: ./network.sh prereq
@@ -84,6 +84,20 @@ jobs:
       - run: ./network.sh api
       # Deploying again must upgrade in place (sequence 2) and keep the data.
       - run: CC_VERSION=0.2 ./network.sh deploy && ./network.sh smoke
+      # The PKI runbook: renew a peer, rotate an orderer's TLS certificate, revoke a gateway.
+      # Last, because it revokes the gateway the other tests use.
+      - name: PKI runbook test
+        env: { BASH_ENV: "" }
+        run: |
+          # Its own log through a pipe: the full output is there even when it fails.
+          set -o pipefail
+          annotate() { python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::%s title=PKI test::%s" % (sys.argv[1], m))' "$1"; }
+          bash scripts/pki-test.sh 2>&1 | tee "$RUNNER_TEMP/pki.log" || {
+            tail -n 60 "$RUNNER_TEMP/pki.log" | annotate error
+            exit 1
+          }
+          # What each runbook step proved, visible on the PR.
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/pki.log" | grep -E '^(ok:|==>) ' | annotate notice
       - name: Show the failure on the PR
         if: failure()
         env: { BASH_ENV: "" }

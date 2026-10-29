@@ -15,7 +15,8 @@ no se publican, y el regulador co-firma cada operación.
 | Parte | Dónde | Qué hace |
 | --- | --- | --- |
 | Chaincode | [`fabric/chaincode/pharmatrace`](fabric/chaincode/pharmatrace) | Contrato en Go: lotes, cargamentos, dispensa, recall, precios privados y cadena de frío |
-| Red | [`fabric/network`](fabric/network) | 4 organizaciones, 3 orderers Raft, chaincode como servicio. `network.sh` la levanta y la prueba |
+| Red | [`fabric/network`](fabric/network) | 4 organizaciones con su Fabric CA, 3 orderers Raft, chaincode como servicio. `network.sh` la levanta y la prueba |
+| PKI | [`fabric/docs/PKI.md`](fabric/docs/PKI.md) | Emisión de identidades y runbook: vencimientos, renovar, rotar el TLS de un orderer, revocar con CRL |
 | API | [`backend/`](backend) | REST (Express) sobre el Fabric Gateway SDK; también es el gateway IoT |
 | IoT | [`iot/`](iot) | Valija con sensores: formato de lectura, simulador, hardware y modelo de amenazas |
 | Firmware | [Pharmatrace-firmware](https://github.com/gastonhp1/Pharmatrace-firmware) | ESP32 de la valija |
@@ -118,8 +119,8 @@ de la API, la escanea con Trivy, la firma y la promueve por GitOps.
 
 ## Limitaciones
 
-- **Identidades:** cryptogen genera todas las claves en una máquina, y la API las tiene todas. Sirve para
-  desarrollo. Lo siguiente es una Fabric CA por org y una API por org.
+- **Identidades:** cada org tiene su Fabric CA, pero la API tiene las identidades de todas. Lo correcto es una
+  API por org; y las CAs son raíces online sin HSM. Ver [`fabric/docs/PKI.md`](fabric/docs/PKI.md).
 - **IoT:** el gateway guarda las lecturas en archivos (un solo proceso); no detecta huecos de datos; la evidencia
   prueba qué se midió, no que el sensor no fuera manipulado. Detalle en [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
 - **Modelo:** la cadena es fija (laboratorio → droguería → farmacia), sin devoluciones; un lote se sigue entero,

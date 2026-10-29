@@ -30,13 +30,20 @@ func newInvoker(t *testing.T) *invoker {
 	return &invoker{t: t, l: newLedger(), cc: cc, id: map[string][]byte{}}
 }
 
-func (iv *invoker) call(msp, fn string, args ...string) (string, int32) {
+// call runs fn as user1 of the org; "DistMSP/gw" runs it as a gateway of DistMSP (a certificate
+// with pharmatrace.role=iot-gateway).
+func (iv *invoker) call(who, fn string, args ...string) (string, int32) {
 	iv.t.Helper()
-	if iv.id[msp] == nil {
-		iv.id[msp] = serializedIdentity(iv.t, msp, "user1@"+strings.ToLower(msp))
+	if iv.id[who] == nil {
+		msp, gw, _ := strings.Cut(who, "/")
+		var attrs map[string]string
+		if gw == "gw" {
+			attrs = map[string]string{AttrRole: RoleIoTGateway}
+		}
+		iv.id[who] = serializedIdentity(iv.t, msp, "user1@"+strings.ToLower(msp), attrs)
 	}
 	stub := iv.l.newTx()
-	stub.creator = iv.id[msp]
+	stub.creator = iv.id[who]
 	stub.function = fn
 	stub.args = args
 	resp := iv.cc.Invoke(stub)
@@ -83,12 +90,16 @@ func TestInvokeThroughContractAPI(t *testing.T) {
 
 	// Cold chain with a struct argument passed as JSON.
 	iv.ok(reg, "SetColdChainPolicy", "2-8C", "200", "800", "1800")
-	who := iv.ok(dist, "WhoAmI")
-	var me Attestor
-	if err := json.Unmarshal([]byte(who), &me); err != nil || me.MSPID != dist || me.ClientID == "" {
+	// The role comes from the certificate: Fabric CA's attribute extension, read by the shim.
+	who := iv.ok(dist+"/gw", "WhoAmI")
+	var me Identity
+	if err := json.Unmarshal([]byte(who), &me); err != nil || me.MSPID != dist || me.ClientID == "" || me.Role != RoleIoTGateway {
 		t.Fatalf("WhoAmI: %s", who)
 	}
-	iv.ok(reg, "RegisterAttestor", dist, me.ClientID)
+	if out := iv.ok(dist, "WhoAmI"); !strings.Contains(out, `"role":""`) {
+		t.Fatalf("a certificate without attributes has no role: %s", out)
+	}
+	iv.ok(reg, "AuthorizeGatewayOrg", dist)
 	now := iv.l.now.Unix()
 	iv.ok(dist, "RegisterDevice", "valija-01", strings.Repeat("ab", 64), fmt.Sprint(now+86400))
 	// A []string argument goes as a JSON array.
@@ -98,7 +109,10 @@ func TestInvokeThroughContractAPI(t *testing.T) {
 		t.Fatalf("a new monitoring must have empty lists, not null: %s", out)
 	}
 	window, _ := json.Marshal(Window{Root: strings.Repeat("ab", 32), Count: 5, From: now - 300, To: now, MinTemp: 400, MaxTemp: 500})
-	iv.ok(dist, "AnchorWindow", "C1", string(window))
+	if _, status := iv.call(dist, "AnchorWindow", "C1", string(window)); status == shim.OK {
+		t.Fatal("an identity without the iot-gateway role anchored a window")
+	}
+	iv.ok(dist+"/gw", "AnchorWindow", "C1", string(window))
 	if out := iv.ok(reg, "VerifyReading", "C1", "0", strings.Repeat("ab", 32), "[]"); out != "true" {
 		t.Fatalf("a one-leaf window verifies its own leaf, got %s", out)
 	}

@@ -30,6 +30,17 @@ func clientID(ctx contractapi.TransactionContextInterface) (string, error) {
 	return id, nil
 }
 
+// clientRole is the pharmatrace.role attribute of the client certificate, or "" if it has none.
+// Fabric CA writes the attributes in an X.509 extension that only the issuing CA can set, so an
+// identity cannot give itself a role.
+func clientRole(ctx contractapi.TransactionContextInterface) (string, error) {
+	role, _, err := ctx.GetClientIdentity().GetAttributeValue(AttrRole)
+	if err != nil {
+		return "", fmt.Errorf("could not read the certificate attributes: %w", err)
+	}
+	return role, nil
+}
+
 func requireRegulator(ctx contractapi.TransactionContextInterface) error {
 	msp, err := clientMSP(ctx)
 	if err != nil {

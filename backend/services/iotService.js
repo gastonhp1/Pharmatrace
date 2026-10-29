@@ -6,7 +6,8 @@ const { decodeReading, leafHash } = require("../iot/reading");
 
 // The IoT gateway on Fabric. It verifies the valija's signed readings off-chain (iot/ingest.js),
 // keeps them (iot/store.js) and anchors one Merkle root per window in the chaincode, which gives
-// the verdict. It acts with its own identity (an authorized attestor, IOT_GATEWAY_IDENTITY).
+// the verdict. It acts with its own identity (IOT_GATEWAY_IDENTITY), whose certificate carries
+// pharmatrace.role=iot-gateway.
 //
 //   ledger      services/fabric.js createLedger() or a fake
 //   store       ReadingStore
@@ -125,12 +126,16 @@ function createIotService({
             });
         },
 
-        // The regulator authorizes this API's gateway identity to anchor readings.
+        // The regulator accepts the IoT gateways of this API's gateway org. Which identities are
+        // gateways is in their certificates (pharmatrace.role=iot-gateway), issued by the org's CA.
         authorizeGateway() {
             return writeQueue(async () => {
                 const me = await ledger.evaluate(gateway, "WhoAmI", []);
-                await ledger.submit({ mspId: REGULATOR }, "RegisterAttestor", [me.mspId, me.clientId], { endorsingOrgs: endorsers(REGULATOR) });
-                return { ok: true, mspId: me.mspId, clientId: me.clientId };
+                if (me.role !== "iot-gateway") {
+                    throw new ApiError(409, `${me.mspId} identity ${gateway.user || ""} has no iot-gateway role in its certificate`);
+                }
+                await ledger.submit({ mspId: REGULATOR }, "AuthorizeGatewayOrg", [me.mspId], { endorsingOrgs: endorsers(REGULATOR) });
+                return { ok: true, mspId: me.mspId, role: me.role };
             });
         },
 

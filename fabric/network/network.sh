@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # PharmaTrace local Fabric network.
 #
-#   ./network.sh prereq    download the Fabric CLI binaries (peer, osnadmin, configtxgen, cryptogen)
-#   ./network.sh up        generate the identities and start orderers and peers
+#   ./network.sh prereq    download the Fabric binaries (peer, osnadmin, configtxgen, fabric-ca-client...)
+#   ./network.sh up        start the CAs, issue every identity, start orderers and peers
 #   ./network.sh channel   create the "pharmatrace" channel and join everyone to it
 #   ./network.sh deploy    build, install, approve and commit the chaincode; register the orgs
 #   ./network.sh smoke     run the end-to-end scenario with the peer CLI (scripts/smoke.sh)
 #   ./network.sh api       start the REST API and run the scenario over HTTP (scripts/api-e2e.sh)
+#   ./network.sh pki ...   PKI runbook: status, renew-peer, rotate-orderer-tls, revoke... (scripts/pki.sh)
 #   ./network.sh all       up + channel + deploy + smoke
 #   ./network.sh down      stop everything and delete the generated material
 #
@@ -17,30 +18,52 @@ cd "$(dirname "$0")"
 source scripts/env.sh
 
 FABRIC_VERSION="${FABRIC_VERSION:-3.1.5}"
-export FABRIC_VERSION
+FABRIC_CA_VERSION="${FABRIC_CA_VERSION:-1.5.22}"
+export FABRIC_VERSION FABRIC_CA_VERSION
 COMPOSE=(docker compose -f compose.yaml)
 
 prereq() {
-  if [[ -x bin/peer && -f config/core.yaml ]] && bin/peer version | grep -q "Version: v\?$FABRIC_VERSION"; then
-    ok "Fabric $FABRIC_VERSION binaries already in bin/"
-    return
-  fi
-  local os arch
+  local os arch url
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
   arch=$(uname -m)
   case "$arch" in x86_64) arch=amd64 ;; aarch64 | arm64) arch=arm64 ;; esac
-  local url="https://github.com/hyperledger/fabric/releases/download/v$FABRIC_VERSION/hyperledger-fabric-$os-$arch-$FABRIC_VERSION.tar.gz"
-  info "Downloading $url"
-  rm -rf bin config
-  curl -fsSL --retry 3 "$url" | tar xz bin config
-  ok "$(bin/peer version | head -2 | tail -1)"
+
+  if [[ -x bin/peer && -f config/core.yaml ]] && bin/peer version | grep -q "Version: v\?$FABRIC_VERSION"; then
+    ok "Fabric $FABRIC_VERSION binaries already in bin/"
+  else
+    url="https://github.com/hyperledger/fabric/releases/download/v$FABRIC_VERSION/hyperledger-fabric-$os-$arch-$FABRIC_VERSION.tar.gz"
+    info "Downloading $url"
+    rm -rf config bin/peer bin/orderer bin/osnadmin bin/configtxgen bin/configtxlator bin/cryptogen bin/discover bin/ledgerutil
+    curl -fsSL --retry 3 "$url" | tar xz bin config
+    ok "$(bin/peer version | head -2 | tail -1)"
+  fi
+
+  if [[ -x bin/fabric-ca-client ]] && bin/fabric-ca-client version | grep -q "Version: v\?$FABRIC_CA_VERSION"; then
+    ok "Fabric CA $FABRIC_CA_VERSION client already in bin/"
+  else
+    url="https://github.com/hyperledger/fabric-ca/releases/download/v$FABRIC_CA_VERSION/hyperledger-fabric-ca-$os-$arch-$FABRIC_CA_VERSION.tar.gz"
+    info "Downloading $url"
+    curl -fsSL --retry 3 "$url" | tar xz bin
+    ok "$(bin/fabric-ca-client version | head -2 | tail -1)"
+  fi
 }
 
+CA_SERVICES=(ca.orderer.pharmatrace.ar ca.lab.pharmatrace.ar ca.dist.pharmatrace.ar ca.farma.pharmatrace.ar ca.reg.pharmatrace.ar)
+
 up() {
-  command -v peer >/dev/null || fatal "the Fabric binaries are missing: run ./network.sh prereq"
+  if ! command -v peer >/dev/null || ! command -v fabric-ca-client >/dev/null; then
+    fatal "the Fabric binaries are missing: run ./network.sh prereq"
+  fi
   if [[ ! -d organizations ]]; then
-    info "Generating identities with cryptogen"
-    cryptogen generate --config=crypto-config.yaml --output=organizations
+    # The CAs come first: the orderers and peers mount folders that only exist once the CAs
+    # issued their certificates.
+    mkdir -p "$CA_DIR"
+    (umask 077 && openssl rand -hex 16 >"$CA_DIR/admin.secret")
+    CA_ADMIN_SECRET=$(cat "$CA_DIR/admin.secret")
+    export CA_ADMIN_SECRET
+    info "Starting the Fabric CAs ($FABRIC_CA_VERSION)"
+    "${COMPOSE[@]}" up -d "${CA_SERVICES[@]}"
+    bash scripts/pki.sh bootstrap
   fi
   info "Starting orderers and peers (Fabric $FABRIC_VERSION)"
   "${COMPOSE[@]}" up -d
@@ -175,7 +198,8 @@ case "${1:-}" in
   deploy) deploy ;;
   smoke) bash scripts/smoke.sh ;;
   api) bash scripts/api-e2e.sh ;;
+  pki) shift && bash scripts/pki.sh "$@" ;;
   all) up && channel && deploy && bash scripts/smoke.sh ;;
   down) down ;;
-  *) sed -n '2,13p' network.sh | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,14p' network.sh | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

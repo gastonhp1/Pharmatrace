@@ -79,18 +79,19 @@ expect "$(query reg User1 "$(call VerifyCommercialTerms "$B1" manufacturer)" "$T
 FAKE_T="{\"terms\":\"$(b64 "$(echo "$TERMS" | jq -c '.unitPrice = "9999.00"')")\"}"
 expect "$(query reg User1 "$(call VerifyCommercialTerms "$B1" manufacturer)" "$FAKE_T")" false "verification of a fake price"
 
-step "7. Cold chain: Dist packs $B1 in a cargo with its valija; the regulator authorizes Dist's IoT gateway (User2)"
+step "7. Cold chain: Dist packs $B1 in a cargo with its valija; the regulator accepts Dist's IoT gateways"
 must invoke reg User1 "reg lab" "$(call SetColdChainPolicy "$POLICY" 200 800 1800)"
-GATEWAY_ID=$(query dist User2 "$(call WhoAmI)" | jq -r .clientId)
-must invoke reg User1 "reg lab" "$(call RegisterAttestor DistMSP "$GATEWAY_ID")"
+# The role is in the gateway's certificate (issued by Dist's CA); the regulator authorizes the org.
+expect "$(query dist IotGateway "$(call WhoAmI)" | jq -r .role)" iot-gateway "role in the IotGateway certificate"
+must invoke reg User1 "reg lab" "$(call AuthorizeGatewayOrg DistMSP)"
 PUBKEY=$(head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
 must invoke dist User1 "dist reg" "$(call RegisterDevice "$DEVICE" "$PUBKEY" $(($(date +%s) + 31536000)))"
 must invoke dist User1 "dist reg" "$(jq -nc --arg c "$CARGO" --arg b "$B1" '{function: "CreateCargo", Args: [$c, ([$b] | tojson)]}')"
-must invoke dist User2 "dist reg" "$(call StartMonitoring "$CARGO" "$DEVICE" "$POLICY")"
+must invoke dist IotGateway "dist reg" "$(call StartMonitoring "$CARGO" "$DEVICE" "$POLICY")"
 NOW=$(date +%s)
 WINDOW=$(jq -nc --argjson f $((NOW - 600)) --argjson t $((NOW - 60)) \
   '{root: "7d1f0b7c4a3e2d1c0b9a8f7e6d5c4b3a2918f7e6d5c4b3a291807f6e5d4c3b2a", count: 10, from: $f, to: $t, minTemp: 380, maxTemp: 520, excursionSeconds: 0}')
-must invoke dist User2 "dist reg" "$(call AnchorWindow "$CARGO" "$WINDOW")"
+must invoke dist IotGateway "dist reg" "$(call AnchorWindow "$CARGO" "$WINDOW")"
 must_fail "authorized IoT gateway" invoke dist User1 "dist reg" "$(call AnchorWindow "$CARGO" "$WINDOW")"
 expect "$(query reg User1 "$(call VerifyReading "$CARGO" 0 7d1f0b7c4a3e2d1c0b9a8f7e6d5c4b3a2918f7e6d5c4b3a291807f6e5d4c3b2a '[]')")" true "one-leaf proof"
 

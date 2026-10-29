@@ -58,8 +58,10 @@ entrega y libera, y `DissolveCargo` deshace uno que no salió (por ejemplo, para
 recall).
 
 **Cadena de frío** (`contract/coldchain.go`). Cada org registra sus valijas con su clave pública
-(`RegisterDevice`); el regulador fija las políticas y autoriza a los gateways IoT por certificado
-(`RegisterAttestor`). El gateway ancla una raíz de Merkle por ventana de lecturas, con mín/máx y
+(`RegisterDevice`); el regulador fija las políticas y acepta los gateways IoT de una org
+(`AuthorizeGatewayOrg`). Es gateway la identidad cuyo certificado trae `pharmatrace.role=iot-gateway`
+(control de acceso por atributo, ver [`docs/PKI.md`](docs/PKI.md)). El gateway ancla una raíz de
+Merkle por ventana de lecturas, con mín/máx y
 segundos fuera de rango, y el chaincode da el veredicto del cargamento (`MONITORING`, `COMPLIANT`
 o `COMPROMISED`). `VerifyReading` comprueba una prueba de Merkle contra una raíz anclada. Detalle
 en [`iot/docs/ARCHITECTURE.md`](../iot/docs/ARCHITECTURE.md).
@@ -75,7 +77,7 @@ repo clonado **dentro** de WSL (`~/repos/...`, no `/mnt/c/...`, que es lento y r
 
 ```bash
 cd fabric/network
-./network.sh prereq    # baja peer, osnadmin, configtxgen y cryptogen (Fabric 3.1.5) a bin/
+./network.sh prereq    # baja peer, osnadmin, configtxgen (Fabric 3.1.5) y fabric-ca-client (1.5.22) a bin/
 ./network.sh all       # up + channel + deploy + smoke
 ./network.sh api       # levanta la API y hace el recorrido por HTTP con dos valijas simuladas
 ./network.sh down      # para todo y borra certificados, bloques y volúmenes
@@ -104,9 +106,8 @@ go test ./...
 
 1. ~~Chaincode y red local con docker compose.~~
 2. ~~API con el Fabric Gateway SDK (`backend/`), con el gateway IoT anclando en el chaincode.~~
-3. **PKI de verdad**: Fabric CA por organización en vez de cryptogen, atributos en los
-   certificados (`pharmatrace.role=iot-gateway`) para el control de acceso, y un runbook de
-   renovación de certificados.
+3. ~~PKI: una Fabric CA por organización, el gateway IoT por atributo del certificado y el runbook
+   de certificados (renovar, rotar el TLS de un orderer, revocar con CRL). Ver [`docs/PKI.md`](docs/PKI.md).~~
 4. **Kubernetes**: la red en kind y después en AKS, con el operador de Fabric o charts de Helm,
    sincronizada por ArgoCD desde el repo de GitOps.
 5. **Operación**: métricas de peers y orderers en Prometheus/Grafana (ya exponen `/metrics` en
@@ -114,7 +115,7 @@ go test ./...
 
 ## Limitaciones
 
-- cryptogen genera todas las claves en una máquina: sirve para desarrollo, nunca para producción.
+- Cada CA es raíz y está online, sin HSM y con SQLite; lo que falta para producción está en [`docs/PKI.md`](docs/PKI.md).
 - Un peer por organización; sin CouchDB (las consultas por dueño usan claves compuestas).
 - Entre peer y chaincode no hay TLS (el contenedor de chaincode lo soporta; se activa en el paso de K8s).
 - Un lote se sigue entero; falta la serialización por unidad que pide el sistema de trazabilidad de ANMAT.

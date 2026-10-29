@@ -14,7 +14,7 @@ evidencia en el ledger de Fabric.
    │  3. guarda la lectura (hoy: archivo; en producción: base de datos)
    │
    │  cada tanto (o a pedido): POST /api/iot/cargo/:id/anchor
-   ▼  Fabric Gateway, con la identidad del gateway IoT (DistMSP User2), endosado por su org + el regulador
+   ▼  Fabric Gateway, con la identidad del gateway IoT (DistMSP IotGateway), endosado por su org + el regulador
  chaincode AnchorWindow        raíz de Merkle + mín/máx + segundos fuera de rango
  chaincode ReportDeviceEvent   tapa abierta / golpe / sello roto
    │
@@ -40,8 +40,9 @@ la clave de `GetDevice`.
 ## Quién puede qué
 
 - **Cada org** registra sus valijas (`RegisterDevice`) y las da de baja (`SetDeviceActive`). El regulador también.
-- **El regulador** fija las políticas y autoriza a los gateways (`RegisterAttestor`, por certificado: el *client ID*
-  que devuelve `WhoAmI`). También puede revocarlos.
+- **El regulador** fija las políticas y acepta los gateways de una org (`AuthorizeGatewayOrg`). Qué identidad es un
+  gateway lo dice su certificado: el atributo `pharmatrace.role=iot-gateway`, que solo puede poner la CA de esa org.
+  Para dar de baja un gateway, la org revoca su certificado y publica la CRL ([`fabric/docs/PKI.md`](../../fabric/docs/PKI.md)).
 - **El dueño del cargamento o un gateway autorizado** empieza el monitoreo (`StartMonitoring`). La valija tiene que
   estar activa, calibrada y libre.
 - **Solo un gateway autorizado** ancla ventanas y reporta eventos.
