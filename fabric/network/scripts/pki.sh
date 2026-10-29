@@ -36,7 +36,8 @@ ca_admin() {
   local org=$1
   shift
   FABRIC_CA_CLIENT_HOME="$CA_DIR/$org/admin" fabric-ca-client "$@" \
-    -u "https://localhost:${CA_PORT[$org]}" --caname "ca-$org" --tls.certfiles "$(ca_cert "$org")"
+    -u "https://localhost:${CA_PORT[$org]}" --caname "ca-$org" --tls.certfiles "$(ca_cert "$org")" 2>"$WORK/ca.log" ||
+    { cat "$WORK/ca.log" >&2; fatal "fabric-ca-client $1 failed in ca-$org"; }
 }
 
 # NodeOUs: the OU that Fabric CA writes from the identity type (peer, client, admin, orderer) is
@@ -254,12 +255,19 @@ cmd_rotate_orderer_tls() {
   ok "consenter $host updated in the channel config"
 
   docker restart "$host" >/dev/null
-  local port
+  local port i
   port=$(orderer_admin_port "$n")
-  retry 30 bash -c "osnadmin channel info --channelID '$CHANNEL' -o 'localhost:$port' --ca-file '$ORDERER_CA' \
-    --client-cert '$dir/server.crt' --client-key '$dir/server.key' 2>/dev/null | grep -q '\"consensusRelation\": \"consenter\"'" ||
-    fatal "$host did not rejoin the channel as a consenter"
-  ok "$host is back in the consenter set with its new certificate"
+  for ((i = 1; i <= 30; i++)); do
+    if osnadmin channel info --channelID "$CHANNEL" -o "localhost:$port" --ca-file "$ORDERER_CA" \
+      --client-cert "$dir/server.crt" --client-key "$dir/server.key" >"$WORK/info" 2>&1 &&
+      grep -q 'consenter' "$WORK/info" && grep -q '"active"' "$WORK/info"; then
+      ok "$host is back as an active consenter with its new certificate"
+      return
+    fi
+    sleep 3
+  done
+  cat "$WORK/info" >&2
+  fatal "$host did not rejoin the channel as an active consenter"
 }
 
 # ---------------------------------------------------------------- identities

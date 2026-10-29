@@ -29,7 +29,7 @@ jobs:
       - name: Keep a log for the PR annotations
         working-directory: .
         run: |
-          echo 'exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1' > "$RUNNER_TEMP/tee.sh"
+          echo '[ -n "${JOB_LOG_TEE:-}" ] || { export JOB_LOG_TEE=1; exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1; }' > "$RUNNER_TEMP/tee.sh"
           echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
@@ -59,7 +59,7 @@ jobs:
       - name: Keep a log for the PR annotations
         working-directory: .
         run: |
-          echo 'exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1' > "$RUNNER_TEMP/tee.sh"
+          echo '[ -n "${JOB_LOG_TEE:-}" ] || { export JOB_LOG_TEE=1; exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1; }' > "$RUNNER_TEMP/tee.sh"
           echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
       - run: shellcheck -x network.sh scripts/*.sh
       - run: ./network.sh prereq
