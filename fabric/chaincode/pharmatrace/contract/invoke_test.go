@@ -2,6 +2,7 @@ package contract
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -88,13 +89,22 @@ func TestInvokeThroughContractAPI(t *testing.T) {
 		t.Fatalf("WhoAmI: %s", who)
 	}
 	iv.ok(reg, "RegisterAttestor", dist, me.ClientID)
-	out = iv.ok(dist, "StartMonitoring", "B1", "valija-01", "2-8C")
-	if !strings.Contains(out, `"roots":[]`) {
-		t.Fatalf("a new monitoring must have an empty roots list: %s", out)
-	}
 	now := iv.l.now.Unix()
+	iv.ok(dist, "RegisterDevice", "valija-01", strings.Repeat("ab", 64), fmt.Sprint(now+86400))
+	// A []string argument goes as a JSON array.
+	iv.ok(dist, "CreateCargo", "C1", `["B1"]`)
+	out = iv.ok(dist, "StartMonitoring", "C1", "valija-01", "2-8C")
+	if !strings.Contains(out, `"roots":[]`) || !strings.Contains(out, `"events":[]`) {
+		t.Fatalf("a new monitoring must have empty lists, not null: %s", out)
+	}
 	window, _ := json.Marshal(Window{Root: strings.Repeat("ab", 32), Count: 5, From: now - 300, To: now, MinTemp: 400, MaxTemp: 500})
-	iv.ok(dist, "AnchorWindow", "B1", string(window))
+	iv.ok(dist, "AnchorWindow", "C1", string(window))
+	if out := iv.ok(reg, "VerifyReading", "C1", "0", strings.Repeat("ab", 32), "[]"); out != "true" {
+		t.Fatalf("a one-leaf window verifies its own leaf, got %s", out)
+	}
+	if out := iv.ok(reg, "IsAttestor"); out != "false" {
+		t.Fatalf("IsAttestor for the regulator: %s", out)
+	}
 
 	// Errors come back as a non-OK status with the chaincode's message.
 	if msg, status := iv.call(dist, "RegisterBatch", "B2", "07791234567890", "X", "L", "2028-01-01"); status == shim.OK || !strings.Contains(msg, "only a manufacturer") {

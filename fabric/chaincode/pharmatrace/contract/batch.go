@@ -24,12 +24,12 @@ func (c *PharmaTrace) RegisterOrg(ctx contractapi.TransactionContextInterface, m
 		return err
 	}
 	if strings.TrimSpace(mspID) == "" || mspID == RegulatorMSP {
-		return fmt.Errorf("invalid MSP ID %q", mspID)
+		return invalid("invalid MSP ID %q", mspID)
 	}
 	switch role {
 	case RoleManufacturer, RoleDistributor, RolePharmacy:
 	default:
-		return fmt.Errorf("invalid role %q: use %s, %s or %s", role, RoleManufacturer, RoleDistributor, RolePharmacy)
+		return invalid("invalid role %q: use %s, %s or %s", role, RoleManufacturer, RoleDistributor, RolePharmacy)
 	}
 	now, err := txTimeString(ctx)
 	if err != nil {
@@ -46,7 +46,7 @@ func (c *PharmaTrace) GetOrg(ctx contractapi.TransactionContextInterface, mspID 
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("org %s is not registered", mspID)
+		return nil, notFound("org %s is not registered", mspID)
 	}
 	return &org, nil
 }
@@ -86,20 +86,20 @@ func (c *PharmaTrace) RegisterBatch(
 		return nil, err
 	}
 	if role != RoleManufacturer {
-		return nil, fmt.Errorf("only a manufacturer can register batches, %s is %q", msp, role)
+		return nil, forbidden("only a manufacturer can register batches, %s is %q", msp, role)
 	}
 
-	if strings.TrimSpace(batchID) == "" || strings.ContainsRune(batchID, 0) {
-		return nil, fmt.Errorf("invalid batch ID")
+	if strings.TrimSpace(batchID) == "" {
+		return nil, invalid("invalid batch ID")
 	}
 	if !gtinPattern.MatchString(gtin) {
-		return nil, fmt.Errorf("invalid GTIN %q: 8 to 14 digits", gtin)
+		return nil, invalid("invalid GTIN %q: 8 to 14 digits", gtin)
 	}
 	if strings.TrimSpace(product) == "" || strings.TrimSpace(lot) == "" {
-		return nil, fmt.Errorf("product and lot are required")
+		return nil, invalid("product and lot are required")
 	}
 	if _, err := time.Parse("2006-01-02", expiryDate); err != nil {
-		return nil, fmt.Errorf("invalid expiry date %q: use YYYY-MM-DD", expiryDate)
+		return nil, invalid("invalid expiry date %q: use YYYY-MM-DD", expiryDate)
 	}
 
 	var existing Batch
@@ -108,7 +108,7 @@ func (c *PharmaTrace) RegisterBatch(
 		return nil, err
 	}
 	if exists {
-		return nil, fmt.Errorf("batch %s already exists", batchID)
+		return nil, conflict("batch %s already exists", batchID)
 	}
 
 	batch := &Batch{
@@ -135,26 +135,11 @@ func (c *PharmaTrace) DispatchBatch(ctx contractapi.TransactionContextInterface,
 	if err != nil {
 		return nil, err
 	}
-	if batch.State == StateInTransit {
-		return nil, fmt.Errorf("batch %s is already in transit to %s", batchID, batch.PendingTo)
+	if batch.Cargo != "" {
+		return nil, conflict("batch %s travels in cargo %s: dispatch the cargo", batchID, batch.Cargo)
 	}
-	if batch.State == StateInPharmacy {
-		return nil, fmt.Errorf("batch %s is in a pharmacy: it can only be dispensed", batchID)
-	}
-
-	fromRole, err := orgRole(ctx, batch.Owner)
-	if err != nil {
+	if err := c.checkDispatch(ctx, batch, toMSP); err != nil {
 		return nil, err
-	}
-	toRole, err := orgRole(ctx, toMSP)
-	if err != nil {
-		return nil, err
-	}
-	if toRole == "" {
-		return nil, fmt.Errorf("org %s is not registered", toMSP)
-	}
-	if nextRole[fromRole] != toRole {
-		return nil, fmt.Errorf("a %s can only dispatch to a %s, %s is a %s", fromRole, nextRole[fromRole], toMSP, toRole)
 	}
 
 	previousOwner := batch.Owner
@@ -177,28 +162,17 @@ func (c *PharmaTrace) ReceiveBatch(ctx contractapi.TransactionContextInterface, 
 	if err != nil {
 		return nil, err
 	}
-	if batch.State != StateInTransit || batch.PendingTo != msp {
-		return nil, fmt.Errorf("batch %s is not in transit to %s", batchID, msp)
+	// A batch recalled on the way still arrives: the recipient takes custody to quarantine it.
+	if batch.PendingTo != msp || (batch.State != StateInTransit && batch.State != StateRecalled) {
+		return nil, conflict("batch %s is not in transit to %s", batchID, msp)
 	}
-	role, err := orgRole(ctx, msp)
-	if err != nil {
+	if batch.Cargo != "" {
+		return nil, conflict("batch %s travels in cargo %s: receive the cargo", batchID, batch.Cargo)
+	}
+	if err := c.receive(ctx, batch, msp); err != nil {
 		return nil, err
 	}
-	state, ok := stateHeldBy[role]
-	if !ok {
-		return nil, fmt.Errorf("a %q cannot hold batches", role)
-	}
-
-	if err := c.moveOwnerIndex(ctx, batch.ID, batch.Owner, msp); err != nil {
-		return nil, err
-	}
-	batch.Owner = msp
-	batch.PendingTo = ""
-	batch.State = state
-	if err := c.saveBatch(ctx, batch, msp); err != nil {
-		return nil, err
-	}
-	return batch, emit(ctx, EventBatchReceived, batchEvent{BatchID: batchID, Owner: msp, State: state})
+	return batch, emit(ctx, EventBatchReceived, batchEvent{BatchID: batchID, Owner: msp, State: batch.State})
 }
 
 // DispenseBatch records that a pharmacy handed the batch to a patient. Only a hash of the patient
@@ -209,11 +183,14 @@ func (c *PharmaTrace) DispenseBatch(ctx contractapi.TransactionContextInterface,
 		return nil, err
 	}
 	if batch.State != StateInPharmacy {
-		return nil, fmt.Errorf("batch %s is %s, it has to be IN_PHARMACY to be dispensed", batchID, batch.State)
+		return nil, conflict("batch %s is %s, it has to be IN_PHARMACY to be dispensed", batchID, batch.State)
+	}
+	if batch.Cargo != "" {
+		return nil, conflict("batch %s is still in cargo %s", batchID, batch.Cargo)
 	}
 	patientRefHash = strings.ToLower(patientRefHash)
 	if !sha256Hex.MatchString(patientRefHash) {
-		return nil, fmt.Errorf("patientRefHash has to be a sha256 in hex (64 characters)")
+		return nil, invalid("patientRefHash has to be a sha256 in hex (64 characters)")
 	}
 
 	batch.State = StateDispensed
@@ -226,12 +203,14 @@ func (c *PharmaTrace) DispenseBatch(ctx contractapi.TransactionContextInterface,
 
 // RecallBatch pulls a batch from the market. Only the regulator can do it, the batch cannot move
 // again afterwards, and the holder's peer still has to endorse it (state-based endorsement).
+// A recalled batch inside a cargo stays in it, so it arrives with the rest and the recipient
+// takes custody of it to quarantine it.
 func (c *PharmaTrace) RecallBatch(ctx contractapi.TransactionContextInterface, batchID string, reason string) (*Batch, error) {
 	if err := requireRegulator(ctx); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(reason) == "" {
-		return nil, fmt.Errorf("a recall needs a reason")
+		return nil, invalid("a recall needs a reason")
 	}
 	batch, err := c.ReadBatch(ctx, batchID)
 	if err != nil {
@@ -239,19 +218,15 @@ func (c *PharmaTrace) RecallBatch(ctx contractapi.TransactionContextInterface, b
 	}
 	switch batch.State {
 	case StateRecalled:
-		return nil, fmt.Errorf("batch %s is already recalled", batchID)
+		return nil, conflict("batch %s is already recalled", batchID)
 	case StateDispensed:
-		return nil, fmt.Errorf("batch %s was already dispensed", batchID)
+		return nil, conflict("batch %s was already dispensed", batchID)
 	}
 
-	holder := batch.Owner
-	if batch.State == StateInTransit {
-		holder = batch.PendingTo
-	}
 	batch.StateBefore = batch.State
 	batch.State = StateRecalled
 	batch.RecallReason = reason
-	if err := c.saveBatch(ctx, batch, holder); err != nil {
+	if err := c.saveBatch(ctx, batch, holderOf(batch)); err != nil {
 		return nil, err
 	}
 	return batch, emit(ctx, EventBatchRecalled, batchEvent{BatchID: batchID, Owner: batch.Owner, State: batch.State, Reason: reason})
@@ -265,7 +240,7 @@ func (c *PharmaTrace) ReadBatch(ctx contractapi.TransactionContextInterface, bat
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("batch %s does not exist", batchID)
+		return nil, notFound("batch %s does not exist", batchID)
 	}
 	return &batch, nil
 }
@@ -302,7 +277,7 @@ func (c *PharmaTrace) GetBatchHistory(ctx contractapi.TransactionContextInterfac
 		history = append(history, entry)
 	}
 	if len(history) == 0 {
-		return nil, fmt.Errorf("batch %s does not exist", batchID)
+		return nil, notFound("batch %s does not exist", batchID)
 	}
 	return history, nil
 }
@@ -337,6 +312,14 @@ func (c *PharmaTrace) BatchesByOwner(ctx contractapi.TransactionContextInterface
 
 // ---------------------------------------------------------------- internals (not transactions)
 
+// holderOf is the org that physically has the batch: the recipient while it is in transit.
+func holderOf(batch *Batch) string {
+	if batch.PendingTo != "" {
+		return batch.PendingTo
+	}
+	return batch.Owner
+}
+
 // ownedBatch reads a batch and checks that the caller's org owns it and it can still move.
 func (c *PharmaTrace) ownedBatch(ctx contractapi.TransactionContextInterface, batchID string) (*Batch, error) {
 	msp, err := clientMSP(ctx)
@@ -348,12 +331,60 @@ func (c *PharmaTrace) ownedBatch(ctx contractapi.TransactionContextInterface, ba
 		return nil, err
 	}
 	if batch.Owner != msp {
-		return nil, fmt.Errorf("batch %s belongs to %s, not to %s", batchID, batch.Owner, msp)
+		return nil, forbidden("batch %s belongs to %s, not to %s", batchID, batch.Owner, msp)
 	}
 	if batch.State == StateRecalled || batch.State == StateDispensed {
-		return nil, fmt.Errorf("batch %s is %s and cannot change anymore", batchID, batch.State)
+		return nil, conflict("batch %s is %s and cannot change anymore", batchID, batch.State)
 	}
 	return batch, nil
+}
+
+// checkDispatch validates that an owned batch can go to toMSP: it is not already moving, it is
+// not at the end of the chain, and toMSP has the next role.
+func (c *PharmaTrace) checkDispatch(ctx contractapi.TransactionContextInterface, batch *Batch, toMSP string) error {
+	if batch.State == StateInTransit {
+		return conflict("batch %s is already in transit to %s", batch.ID, batch.PendingTo)
+	}
+	if batch.State == StateInPharmacy {
+		return conflict("batch %s is in a pharmacy: it can only be dispensed", batch.ID)
+	}
+	fromRole, err := orgRole(ctx, batch.Owner)
+	if err != nil {
+		return err
+	}
+	toRole, err := orgRole(ctx, toMSP)
+	if err != nil {
+		return err
+	}
+	if toRole == "" {
+		return notFound("org %s is not registered", toMSP)
+	}
+	if nextRole[fromRole] != toRole {
+		return conflict("a %s can only dispatch to a %s, %s is a %s", fromRole, nextRole[fromRole], toMSP, toRole)
+	}
+	return nil
+}
+
+// receive hands a batch in transit to its recipient. A recalled batch changes hands but keeps
+// its state.
+func (c *PharmaTrace) receive(ctx contractapi.TransactionContextInterface, batch *Batch, msp string) error {
+	if batch.State != StateRecalled {
+		role, err := orgRole(ctx, msp)
+		if err != nil {
+			return err
+		}
+		state, ok := stateHeldBy[role]
+		if !ok {
+			return conflict("a %q cannot hold batches", role)
+		}
+		batch.State = state
+	}
+	if err := c.moveOwnerIndex(ctx, batch.ID, batch.Owner, msp); err != nil {
+		return err
+	}
+	batch.Owner = msp
+	batch.PendingTo = ""
+	return c.saveBatch(ctx, batch, msp)
 }
 
 // saveBatch writes the batch, stamps it with the transaction and sets who must endorse the next

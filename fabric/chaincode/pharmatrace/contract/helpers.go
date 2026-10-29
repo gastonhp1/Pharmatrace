@@ -36,7 +36,7 @@ func requireRegulator(ctx contractapi.TransactionContextInterface) error {
 		return err
 	}
 	if msp != RegulatorMSP {
-		return fmt.Errorf("only the regulator (%s) can do this, caller is %s", RegulatorMSP, msp)
+		return forbidden("only the regulator (%s) can do this, caller is %s", RegulatorMSP, msp)
 	}
 	return nil
 }
@@ -68,7 +68,7 @@ var stateHeldBy = map[string]string{
 func key(ctx contractapi.TransactionContextInterface, objectType string, attrs []string) (string, error) {
 	k, err := ctx.GetStub().CreateCompositeKey(objectType, attrs)
 	if err != nil {
-		return "", fmt.Errorf("could not build the %s key: %w", objectType, err)
+		return "", invalid("could not build the %s key: %v", objectType, err)
 	}
 	return k, nil
 }

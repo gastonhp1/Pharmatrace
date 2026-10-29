@@ -1,6 +1,8 @@
 package contract
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -9,22 +11,44 @@ const gatewayUser = "iot-gateway"
 
 func gatewayID() string { return "x509::CN=" + gatewayUser + "::CN=ca." + dist }
 
-// coldSetup leaves batch B1 dispatched to the distributor, with a 2-8 C policy that allows 30
-// minutes out of range and the distributor's IoT gateway authorized.
+var testPubKey = strings.Repeat("ab", 64)
+
+// coldSetup leaves cargo C1 (batch B1) open at the lab, a 2-8 C policy that allows 30 minutes out
+// of range, the distributor's valija-01 registered and its IoT gateway authorized, and C1
+// monitored by valija-01.
 func coldSetup(t *testing.T) *harness {
 	h := setup(t)
 	h.register("B1")
+	h.createCargo(lab, "C1", "B1")
 	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.SetColdChainPolicy(ctx, "2-8C", 200, 800, 1800) })
 	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.RegisterAttestor(ctx, dist, gatewayID()) })
-	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "B1", "valija-01", "2-8C"); return err })
+	h.registerDevice("valija-01")
+	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "C1", "valija-01", "2-8C"); return err })
 	return h
+}
+
+func (h *harness) registerDevice(id string) {
+	h.t.Helper()
+	expiry := h.l.now.Unix() + 365*24*3600
+	h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.RegisterDevice(ctx, id, "0x"+testPubKey, expiry); return err })
+}
+
+func (h *harness) device(id string) *Device {
+	h.t.Helper()
+	var d *Device
+	h.must(reg, "auditor", func(ctx ctxT) error {
+		var err error
+		d, err = h.cc.GetDevice(ctx, id)
+		return err
+	})
+	return d
 }
 
 func (h *harness) anchor(w Window) (*Monitoring, *fakeStub, error) {
 	var m *Monitoring
 	stub, err := h.as(dist, gatewayUser, func(ctx ctxT) error {
 		var err error
-		m, err = h.cc.AnchorWindow(ctx, "B1", w)
+		m, err = h.cc.AnchorWindow(ctx, "C1", w)
 		return err
 	})
 	return m, stub, err
@@ -32,6 +56,24 @@ func (h *harness) anchor(w Window) (*Monitoring, *fakeStub, error) {
 
 func (h *harness) window(from, to int64, min, max, excursion int) Window {
 	return Window{Root: "0x" + strings.Repeat("1f", 32), Count: 10, From: from, To: to, MinTemp: min, MaxTemp: max, ExcursionSeconds: excursion}
+}
+
+func TestDevices(t *testing.T) {
+	h := setup(t)
+	future := h.l.now.Unix() + 3600
+	register := func(msp, id, key string, expiry int64) func(ctx ctxT) error {
+		return func(ctx ctxT) error { _, err := h.cc.RegisterDevice(ctx, id, key, expiry); return err }
+	}
+	h.fails("FORBIDDEN", "NopeMSP", "user1", register("NopeMSP", "v1", testPubKey, future))
+	h.fails("pubKey", dist, "user1", register(dist, "v1", "abcd", future))
+	h.fails("calibration already expired", dist, "user1", register(dist, "v1", testPubKey, h.l.now.Unix()-1))
+	h.must(dist, "user1", register(dist, "v1", testPubKey, future))
+	h.fails("already exists", lab, "user1", register(lab, "v1", testPubKey, future))
+	if d := h.device("v1"); d.Org != dist || !d.Active || d.PubKey != testPubKey {
+		t.Fatalf("device: %+v", d)
+	}
+	h.fails("belongs to DistMSP", lab, "user1", func(ctx ctxT) error { _, err := h.cc.SetDeviceActive(ctx, "v1", false); return err })
+	h.must(reg, "admin", func(ctx ctxT) error { _, err := h.cc.SetDeviceActive(ctx, "v1", false); return err })
 }
 
 func TestPolicyRules(t *testing.T) {
@@ -45,13 +87,27 @@ func TestPolicyRules(t *testing.T) {
 
 func TestStartMonitoringRules(t *testing.T) {
 	h := coldSetup(t)
-	h.fails("already monitored", lab, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "B1", "valija-02", "2-8C"); return err })
+	if d := h.device("valija-01"); d.ActiveCargo != "C1" {
+		t.Fatalf("device after start: %+v", d)
+	}
+	h.fails("already monitored", lab, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "C1", "valija-02", "2-8C"); return err })
 
 	h.register("B2")
-	h.fails("only the owner", farma, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "B2", "v", "2-8C"); return err })
-	h.fails("does not exist", lab, "user1", func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "B2", "v", "nope"); return err })
-	// An authorized gateway can start it even if its org does not own the batch yet.
-	h.must(dist, gatewayUser, func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "B2", "v", "2-8C"); return err })
+	h.createCargo(lab, "C2", "B2")
+	start := func(msp, user, device, policy string) func(ctx ctxT) error {
+		return func(ctx ctxT) error { _, err := h.cc.StartMonitoring(ctx, "C2", device, policy); return err }
+	}
+	h.fails("only the owner", farma, "user1", start(farma, "user1", "valija-01", "2-8C"))
+	h.fails("policy nope does not exist", lab, "user1", start(lab, "user1", "valija-01", "nope"))
+	h.fails("already monitoring cargo C1", lab, "user1", start(lab, "user1", "valija-01", "2-8C"))
+	h.fails("device valija-02 does not exist", lab, "user1", start(lab, "user1", "valija-02", "2-8C"))
+	h.registerDevice("valija-02")
+	h.fails("is monitoring cargo C1", dist, "user1", func(ctx ctxT) error { _, err := h.cc.SetDeviceActive(ctx, "valija-01", false); return err })
+	h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.SetDeviceActive(ctx, "valija-02", false); return err })
+	h.fails("not operational", lab, "user1", start(lab, "user1", "valija-02", "2-8C"))
+	h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.SetDeviceActive(ctx, "valija-02", true); return err })
+	// An authorized gateway can start it even if its org does not own the cargo.
+	h.must(dist, gatewayUser, start(dist, gatewayUser, "valija-02", "2-8C"))
 }
 
 func TestAnchorWindows(t *testing.T) {
@@ -59,8 +115,8 @@ func TestAnchorWindows(t *testing.T) {
 	now := h.l.now.Unix()
 
 	// Only the authorized gateway identity: another user of the same org cannot anchor.
-	h.fails("authorized IoT gateway", dist, "user1", func(ctx ctxT) error {
-		_, err := h.cc.AnchorWindow(ctx, "B1", h.window(now-600, now-300, 300, 500, 0))
+	h.fails("FORBIDDEN: only an authorized IoT gateway", dist, "user1", func(ctx ctxT) error {
+		_, err := h.cc.AnchorWindow(ctx, "C1", h.window(now-600, now-300, 300, 500, 0))
 		return err
 	})
 
@@ -105,16 +161,20 @@ func TestAnchorWindows(t *testing.T) {
 		t.Fatalf("over budget: %+v events %v", m, stub.events)
 	}
 
-	// Closing keeps the verdict, and a closed session takes no more windows.
-	// While in transit to DistMSP, its users can close the session when they open the valija.
-	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchBatch(ctx, "B1", dist); return err })
+	// While in transit, the recipient closes it when it opens the valija; the verdict stays and
+	// the valija is free again.
+	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchCargo(ctx, "C1", dist); return err })
+	h.fails("only the holder", farma, "user1", func(ctx ctxT) error { _, err := h.cc.CloseMonitoring(ctx, "C1"); return err })
 	h.must(dist, "user1", func(ctx ctxT) error {
-		m, err := h.cc.CloseMonitoring(ctx, "B1")
+		m, err := h.cc.CloseMonitoring(ctx, "C1")
 		if err == nil && (m.Verdict != VerdictCompromised || !m.Closed) {
 			t.Errorf("closed: %+v", m)
 		}
 		return err
 	})
+	if d := h.device("valija-01"); d.ActiveCargo != "" {
+		t.Fatalf("device not freed: %+v", d)
+	}
 	if _, _, err := h.anchor(h.window(now+10, now+20, 300, 500, 0)); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("anchoring after close: %v", err)
 	}
@@ -122,37 +182,79 @@ func TestAnchorWindows(t *testing.T) {
 
 func TestDeviceEventsAndCompliantClose(t *testing.T) {
 	h := coldSetup(t)
-	event := func(kind string) (*Monitoring, error) {
+	event := func(kind, hash string) (*Monitoring, error) {
 		var m *Monitoring
 		_, err := h.as(dist, gatewayUser, func(ctx ctxT) error {
 			var err error
-			m, err = h.cc.ReportDeviceEvent(ctx, "B1", kind, h.l.now.Unix())
+			m, err = h.cc.ReportDeviceEvent(ctx, "C1", kind, h.l.now.Unix(), hash)
 			return err
 		})
 		return m, err
 	}
-	if m, err := event(DeviceEventLidOpened); err != nil || m.Verdict != VerdictMonitoring {
+	hash := strings.Repeat("cd", 32)
+	if m, err := event(DeviceEventLidOpened, hash); err != nil || m.Verdict != VerdictMonitoring || len(m.Events) != 1 || m.Events[0].Kind != DeviceEventLidOpened {
 		t.Fatalf("lid opened: %+v %v", m, err)
 	}
-	if _, err := event("EXPLODED"); err == nil {
+	if _, err := event("EXPLODED", hash); err == nil {
 		t.Fatal("unknown event accepted")
 	}
+	if _, err := event(DeviceEventShock, "nope"); err == nil {
+		t.Fatal("bad payload hash accepted")
+	}
 
-	// Without problems, closing gives COMPLIANT. The pharmacy is not a holder: it cannot close.
-	h.fails("only the holder", farma, "user1", func(ctx ctxT) error { _, err := h.cc.CloseMonitoring(ctx, "B1"); return err })
 	h.must(lab, "user1", func(ctx ctxT) error {
-		m, err := h.cc.CloseMonitoring(ctx, "B1")
+		m, err := h.cc.CloseMonitoring(ctx, "C1")
 		if err == nil && m.Verdict != VerdictCompliant {
 			t.Errorf("verdict %s", m.Verdict)
 		}
 		return err
 	})
 
-	h2 := coldSetup(t)
-	h = h2
-	if m, err := event(DeviceEventSealBroken); err != nil || m.Verdict != VerdictCompromised || !strings.Contains(m.Reason, "seal") {
+	h = coldSetup(t)
+	if m, err := event(DeviceEventSealBroken, hash); err != nil || m.Verdict != VerdictCompromised || !strings.Contains(m.Reason, "seal") {
 		t.Fatalf("seal broken: %+v %v", m, err)
 	}
+}
+
+func TestVerifyReading(t *testing.T) {
+	h := coldSetup(t)
+	// Same tree as backend/iot/merkle.js: sorted pairs, odd node carried up.
+	leaf := func(i byte) []byte { s := sha256.Sum256([]byte{i}); return s[:] }
+	l0, l1, l2 := leaf(0), leaf(1), leaf(2)
+	n01 := hashPair(l0, l1)
+	root := hashPair(n01, l2)
+
+	now := h.l.now.Unix()
+	w := h.window(now-60, now, 300, 500, 0)
+	w.Root = hex.EncodeToString(root)
+	w.Count = 3
+	if _, _, err := h.anchor(w); err != nil {
+		t.Fatal(err)
+	}
+
+	verify := func(index int, l []byte, proof ...[]byte) bool {
+		var ok bool
+		h.must(reg, "auditor", func(ctx ctxT) error {
+			p := []string{}
+			for _, x := range proof {
+				p = append(p, "0x"+hex.EncodeToString(x))
+			}
+			var err error
+			ok, err = h.cc.VerifyReading(ctx, "C1", index, hex.EncodeToString(l), p)
+			return err
+		})
+		return ok
+	}
+	if !verify(0, l1, l0, l2) || !verify(0, l2, n01) {
+		t.Fatal("a valid proof did not verify")
+	}
+	if verify(0, leaf(9), l0, l2) {
+		t.Fatal("a wrong leaf verified")
+	}
+	h.fails("no anchor 1", reg, "auditor", func(ctx ctxT) error {
+		_, err := h.cc.VerifyReading(ctx, "C1", 1, hex.EncodeToString(l0), []string{})
+		return err
+	})
 }
 
 func TestRevokedAttestor(t *testing.T) {
