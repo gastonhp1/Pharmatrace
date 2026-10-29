@@ -97,7 +97,7 @@ jobs:
             exit 1
           }
           # What each runbook step proved, visible on the PR.
-          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/pki.log" | grep -E '^(ok|==>) ' | annotate notice
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/pki.log" | grep -E '^(ok:|==>) ' | annotate notice
       - name: Show the failure on the PR
         if: failure()
         env: { BASH_ENV: "" }
