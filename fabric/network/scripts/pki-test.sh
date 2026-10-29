@@ -49,6 +49,8 @@ retry 10 invoke lab User1 "lab reg" "$(register_batch "PKI-$RUN-1")" >/dev/null 
 ok "committed by orderer1 + orderer2, with orderer1 on its new certificate"
 docker start orderer0.orderer.pharmatrace.ar >/dev/null
 export ORDERER_ADDR=localhost:7050 ORDERER_HOST=orderer0.orderer.pharmatrace.ar
+retry 20 invoke lab User1 "lab reg" "$(register_batch "PKI-$RUN-2")" >/dev/null || fatal "orderer0 did not come back"
+ok "orderer0 is back and ordering"
 
 step "4. A second IoT gateway is only a CA operation: no transaction"
 pki register-gateway dist IotGateway2

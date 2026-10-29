@@ -209,8 +209,9 @@ cmd_renew_peer() {
 update_channel_config() {
   local filter=$1
   shift
+  # An orderer that just restarted answers SERVICE_UNAVAILABLE until it catches up: retry.
   # shellcheck disable=SC2046
-  peer channel fetch config "$WORK/block.pb" $(orderer_args) -c "$CHANNEL" 2>"$WORK/fetch.log" ||
+  retry 20 peer channel fetch config "$WORK/block.pb" $(orderer_args) -c "$CHANNEL" 2>"$WORK/fetch.log" ||
     { cat "$WORK/fetch.log" >&2; fatal "could not fetch the channel config"; }
   configtxlator proto_decode --input "$WORK/block.pb" --type common.Block | jq '.data.data[0].payload.data.config' >"$WORK/config.json"
   jq "$@" "$filter" "$WORK/config.json" >"$WORK/modified.json"
