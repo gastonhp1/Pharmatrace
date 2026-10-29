@@ -10,7 +10,7 @@ Una lectura son **21 bytes, big-endian**:
 | 4 | 4 | `seq` | uint32 | Contador del dispositivo, estrictamente creciente. Tiene que sobrevivir a un reinicio (NVS) |
 | 8 | 2 | `tempCenti` | int16 | Centésimas de °C: 4.50 °C = `450`, -18.50 °C = `-1850` |
 | 10 | 2 | `humCenti` | uint16 | Centésimas de % de humedad relativa |
-| 12 | 1 | `flags` | uint8 | bit0 tapa abierta, bit1 golpe, bit2 sello roto |
+| 12 | 1 | `flags` | uint8 | bit0 tapa abierta, bit1 golpe, bit2 sello roto, bit3 (0x08) apertura autorizada desde la lectura anterior, bit4 (0x10) intento de apertura rechazado ([BOX_UNLOCK.md](BOX_UNLOCK.md)); el gateway hoy interpreta solo los tres primeros |
 | 13 | 4 | `latE5` | int32 | Latitud × 10⁵ (≈ 1 m de resolución) |
 | 17 | 4 | `lonE5` | int32 | Longitud × 10⁵ |
 

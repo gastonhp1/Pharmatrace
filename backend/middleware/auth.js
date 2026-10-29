@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { verifySession } = require("../auth/session");
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -45,4 +46,20 @@ function requireAdminKey(env = process.env) {
     };
 }
 
-module.exports = { requireApiKey, requireAdminKey };
+// Routes that act for a person (the mobile app) need a session from POST /api/auth/login, sent
+// as "Authorization: Bearer <token>". Sets req.user = { username, mspId }. Fails closed: with no
+// SESSION_SECRET configured it answers 503.
+function requireUser(env = process.env) {
+    return function userMiddleware(req, res, next) {
+        if (!env.SESSION_SECRET) {
+            return res.status(503).json({ error: "SESSION_SECRET is not configured on the server" });
+        }
+        const match = /^Bearer (\S+)$/.exec(req.get("authorization") || "");
+        const user = match && verifySession(env.SESSION_SECRET, match[1]);
+        if (!user) return res.status(401).json({ error: "Missing, invalid or expired session" });
+        req.user = user;
+        next();
+    };
+}
+
+module.exports = { requireApiKey, requireAdminKey, requireUser };

@@ -72,7 +72,8 @@ recall) contra la red levantada. Es lo mismo que corre la CI. `./network.sh pki 
 
 ## API
 
-Las lecturas (`GET`) son públicas, salvo los precios. Todo lo demás pide el header `x-api-key` con `API_KEY`.
+Las lecturas (`GET`) son públicas, salvo los precios. Todo lo demás pide el header `x-api-key` con `API_KEY`,
+salvo `/api/auth` y `/api/box`, que usan sesiones por usuario (la app móvil).
 
 La API es **custodial**: tiene una identidad de cada org (los certificados que genera la red) y actúa con la que
 corresponde. Despacha como el dueño del lote, recibe como el destinatario y hace el recall como el regulador. En un
@@ -98,6 +99,7 @@ consorcio real cada org corre su propia API con solo su identidad.
 | POST | `/api/orgs` | `mspId`, `role` (`manufacturer`, `distributor`, `pharmacy`) |
 | GET | `/api/orgs/:msp` · `/api/orgs/:msp/batches` | |
 | | `/api/iot/...` | Valijas, políticas, lecturas, anclaje y pruebas: ver [`iot/`](iot/README.md) |
+| | `/api/auth/...` · `/api/box/...` | Login de usuarios (sesión Bearer) y tokens de apertura de la PharmaBox para la app móvil: ver [`iot/docs/BOX_UNLOCK.md`](iot/docs/BOX_UNLOCK.md) |
 
 Errores, siempre `{"error": "<motivo>"}`. El chaincode marca sus errores con un código y la API lo traduce:
 
