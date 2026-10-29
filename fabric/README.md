@@ -1,11 +1,7 @@
-# PharmaTrace sobre Hyperledger Fabric
+# Red y chaincode de PharmaTrace
 
-La misma trazabilidad de medicamentos que el resto del repo, pero sobre una red **permisionada**:
-cada actor es una organización con su propia autoridad certificante, su peer y su copia del
-chaincode. Es el modelo que tiene sentido para un consorcio de actores conocidos (laboratorios,
-droguerías, farmacias y el regulador), donde nadie quiere una red pública ni pagar gas.
-
-La versión Solidity (`contracts/`) sigue en pie; esta vive al lado, en `fabric/`.
+El detalle de la red de Fabric y del chaincode. La visión general del proyecto, la API y cómo correr todo están
+en el [README principal](../README.md).
 
 > Si recién arrancás con Fabric, leé primero [docs/APRENDER.md](docs/APRENDER.md): explica cada
 > concepto apuntando al archivo donde se usa.
@@ -14,9 +10,9 @@ La versión Solidity (`contracts/`) sigue en pie; esta vive al lado, en `fabric/
 
 | Parte | Dónde | Qué hace |
 | --- | --- | --- |
-| Chaincode | `chaincode/pharmatrace/` | Contrato en Go: lotes, despacho y recepción, dispensa, recall, condiciones comerciales privadas y cadena de frío |
+| Chaincode | `chaincode/pharmatrace/` | Contrato en Go: lotes, cargamentos, dispensa, recall, condiciones comerciales privadas, valijas y cadena de frío |
 | Red local | `network/` | 4 organizaciones, 3 orderers Raft, chaincode como servicio; `network.sh` la levanta y la prueba |
-| CI | `.github/workflows/fabric.yml` | Tests del chaincode y la red completa de punta a punta en cada PR que toque `fabric/` |
+| CI | `.github/workflows/fabric.yml` | Tests del chaincode y la red completa de punta a punta (CLI y API) en cada PR que toque `fabric/`, `backend/` o `iot/` |
 
 ## La red
 
@@ -35,8 +31,8 @@ Todos en un canal, `pharmatrace`. Las reglas de quién firma qué:
 
 | Qué se escribe | Quién tiene que endosar | Dónde se define |
 | --- | --- | --- |
-| Un lote | Su tenedor actual **y** el regulador | Endorsement por estado: `setBatchEndorsement` en `contract/helpers.go` |
-| Registro de orgs, políticas de frío, ventanas IoT | El regulador **y** una org de la cadena | `CC_POLICY` en `network/scripts/env.sh` |
+| Un lote (también al moverlo dentro de un cargamento) | Su tenedor actual **y** el regulador | Endorsement por estado: `setBatchEndorsement` en `contract/helpers.go` |
+| Cargamentos, registro de orgs, valijas, políticas de frío, ventanas IoT | El regulador **y** una org de la cadena | `CC_POLICY` en `network/scripts/env.sh` |
 | Precio entre laboratorio y droguería | Laboratorio **y** droguería | `network/collections_config.json` |
 | Precio entre droguería y farmacia | Droguería **y** farmacia | `network/collections_config.json` |
 
@@ -52,12 +48,24 @@ Todos en un canal, `pharmatrace`. Las reglas de quién firma qué:
 | `RECALLED` | Solo el regulador, en cualquier momento antes de la dispensa | `RecallBatch` |
 
 El despacho tiene dos pasos (despacho y recepción) porque en Fabric el lote cambia de quién
-endosa en el momento del despacho: desde ahí lo controla el destinatario.
+endosa en el momento del despacho: desde ahí lo controla el destinatario. Un lote al que el regulador
+le hace recall en viaje igual llega: el destinatario lo recibe (queda `RECALLED`) para ponerlo en
+cuarentena.
 
-**Cadena de frío.** Es la lógica de `ColdChainMonitor.sol`: el gateway IoT ancla una raíz de
-Merkle por ventana de lecturas, con mín/máx y segundos fuera de rango, y el chaincode da el
-veredicto (`MONITORING`, `COMPLIANT` o `COMPROMISED`). El gateway se autoriza por su certificado
-(`RegisterAttestor`) en vez de por dirección.
+**Cargamentos** (`contract/cargo.go`). Lotes del mismo dueño que viajan juntos un tramo:
+`CreateCargo` los bloquea, `DispatchCargo` los despacha a todos o a ninguno, `ReceiveCargo` los
+entrega y libera, y `DissolveCargo` deshace uno que no salió (por ejemplo, para sacar un lote con
+recall).
+
+**Cadena de frío** (`contract/coldchain.go`). Cada org registra sus valijas con su clave pública
+(`RegisterDevice`); el regulador fija las políticas y autoriza a los gateways IoT por certificado
+(`RegisterAttestor`). El gateway ancla una raíz de Merkle por ventana de lecturas, con mín/máx y
+segundos fuera de rango, y el chaincode da el veredicto del cargamento (`MONITORING`, `COMPLIANT`
+o `COMPROMISED`). `VerifyReading` comprueba una prueba de Merkle contra una raíz anclada. Detalle
+en [`iot/docs/ARCHITECTURE.md`](../iot/docs/ARCHITECTURE.md).
+
+**Errores.** Los que el cliente puede resolver empiezan con un código (`NOT_FOUND`, `FORBIDDEN`,
+`CONFLICT`, `INVALID`, ver `contract/errors.go`) que la API traduce a un estado HTTP.
 
 ## Correrlo
 
@@ -69,6 +77,7 @@ repo clonado **dentro** de WSL (`~/repos/...`, no `/mnt/c/...`, que es lento y r
 cd fabric/network
 ./network.sh prereq    # baja peer, osnadmin, configtxgen y cryptogen (Fabric 3.1.5) a bin/
 ./network.sh all       # up + channel + deploy + smoke
+./network.sh api       # levanta la API y hace el recorrido por HTTP con dos valijas simuladas
 ./network.sh down      # para todo y borra certificados, bloques y volúmenes
 ```
 
@@ -93,11 +102,8 @@ go test ./...
 
 ## Qué sigue
 
-Lo que se hizo es el paso 1. El orden propuesto:
-
 1. ~~Chaincode y red local con docker compose.~~
-2. **API gateway** con el Fabric Gateway SDK (Go o Node) que reemplace a ethers en el backend, y
-   que el gateway IoT (`backend/iot`) ancle en Fabric.
+2. ~~API con el Fabric Gateway SDK (`backend/`), con el gateway IoT anclando en el chaincode.~~
 3. **PKI de verdad**: Fabric CA por organización en vez de cryptogen, atributos en los
    certificados (`pharmatrace.role=iot-gateway`) para el control de acceso, y un runbook de
    renovación de certificados.
@@ -106,11 +112,10 @@ Lo que se hizo es el paso 1. El orden propuesto:
 5. **Operación**: métricas de peers y orderers en Prometheus/Grafana (ya exponen `/metrics` en
    los puertos 9443–9454), y experimentos de caos documentados.
 
-## Limitaciones de este paso
+## Limitaciones
 
 - cryptogen genera todas las claves en una máquina: sirve para desarrollo, nunca para producción.
 - Un peer por organización; sin CouchDB (las consultas por dueño usan claves compuestas).
 - Entre peer y chaincode no hay TLS (el contenedor de chaincode lo soporta; se activa en el paso de K8s).
-- Un lote se sigue entero; la serialización por unidad (como pide el sistema de trazabilidad de
-  ANMAT) y los cargamentos de `CargoTracker` todavía no están portados.
+- Un lote se sigue entero; falta la serialización por unidad que pide el sistema de trazabilidad de ANMAT.
 - El chaincode usa `fabric-contract-api-go` v2.2.1, la última que compila con Go 1.24.

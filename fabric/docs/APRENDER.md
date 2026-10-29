@@ -6,7 +6,7 @@ columna de la derecha de la primera tabla es la traducción rápida.
 
 ## 1. El cambio de modelo
 
-| En Ethereum (la versión Solidity) | En Fabric (esta versión) |
+| En Ethereum ([Pharmatrace-evm](https://github.com/gastonhp1/Pharmatrace-evm)) | En Fabric (este repo) |
 | --- | --- |
 | Cualquiera puede tener una cuenta | Cada participante es una **organización** con su CA; las identidades son certificados X.509 |
 | Una dirección `0x...` | Un **MSP ID** (`LabMSP`) y un certificado; ver `clientMSP` y `clientID` en `contract/helpers.go` |
@@ -66,7 +66,8 @@ canal guarda su hash. Ver `contract/terms.go`:
   `GetHistoryForKey` y así sale la cadena de custodia sin guardarla a mano.
 - **Claves compuestas:** `BatchesByOwner` busca por prefijo en un índice `owner~batch`. Funciona
   con LevelDB, sin CouchDB.
-- **Eventos:** uno por transacción (`emit` en `helpers.go`). El backend los va a escuchar en el paso 2.
+- **Eventos:** uno por transacción (`emit` en `helpers.go`). Un cliente los puede escuchar con
+  `network.getChaincodeEvents` del Fabric Gateway SDK; la API todavía no lo hace.
 
 ## 6. Ciclo de vida del chaincode
 
@@ -81,7 +82,22 @@ Mirá `deploy` en `network/network.sh`:
 Actualizar es lo mismo con la secuencia siguiente. Ninguna org puede cambiar el código de las demás:
 cada una aprueba lo que va a correr.
 
-## 7. Ejercicios sugeridos
+## 7. Del lado del cliente: el Fabric Gateway
+
+`backend/services/fabric.js` es todo lo que la API necesita para hablar con la red:
+
+- Se conecta a **un solo peer** (el de su org). Ese peer hace de *gateway*: pide los endosos a los peers de las
+  otras orgs, arma la transacción y la manda a los orderers. El cliente no conoce a los orderers.
+- `evaluate` es una consulta: corre en un peer y no se ordena. `submit` es una transacción: endoso, orden y
+  espera del commit.
+- `endorsingOrganizations` dice qué orgs tienen que firmar. `backend/services/pharmatrace.js` las elige según la
+  política de cada operación (tenedor + regulador, vendedor + comprador...).
+- `transientData` es por donde viajan los precios privados: llegan a los peers pero no a la transacción.
+- Los errores vuelven con el mensaje de cada peer; la API busca el código (`NOT_FOUND: ...`) y lo traduce a HTTP.
+  Si dos transacciones tocan la misma clave a la vez, la segunda falla al validar (`MVCC_READ_CONFLICT`) y la API
+  responde 409.
+
+## 8. Ejercicios sugeridos
 
 1. Levantá la red, corré el smoke y después hacé a mano un despacho de la droguería a la farmacia
    con `peer chaincode invoke` (copiá la función `invoke` del smoke).
@@ -92,7 +108,7 @@ cada una aprueba lo que va a correr.
    de la transacción, con su test en `contract/batch_test.go`.
 5. Mirá las métricas de un peer: `curl localhost:9451/metrics | grep ledger_blockchain_height`.
 
-## 8. Referencias
+## 9. Referencias
 
 - Documentación oficial: https://hyperledger-fabric.readthedocs.io (sección *Key Concepts*)
 - Endorsement policies y SBE: https://hyperledger-fabric.readthedocs.io/en/latest/endorsement-policies.html

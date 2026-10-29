@@ -1,9 +1,9 @@
 # PharmaTrace IoT: cadena de frío
 
-Una **valija** con sensores viaja con un cargamento, mide el estado del lote y firma cada lectura. Un gateway (en
-`backend/`) verifica las firmas y deja evidencia en la cadena: una raíz de Merkle por ventana de lecturas, el
-tiempo fuera de rango y los eventos (tapa, golpe, sello roto). El resultado es un veredicto por cargamento:
-`Compliant` o `Compromised`.
+Una **valija** con sensores viaja con un cargamento, mide el estado de los lotes y firma cada lectura. Un gateway
+(en `backend/`) verifica las firmas y deja evidencia en el ledger de Fabric: una raíz de Merkle por ventana de
+lecturas, el tiempo fuera de rango y los eventos (tapa, golpe, sello roto). El chaincode da un veredicto por
+cargamento: `COMPLIANT` o `COMPROMISED`.
 
 | Carpeta | Qué hay |
 | --- | --- |
@@ -11,67 +11,65 @@ tiempo fuera de rango y los eventos (tapa, golpe, sello roto). El resultado es u
 | [`hardware/`](hardware) | [Lista de partes propuesta](hardware/BOM.md) (ESP32-S3 + sensores + ATECC608B) |
 | [`simulator/`](simulator) | Valija virtual en Python: genera lecturas firmadas igual que el dispositivo real |
 
-Los contratos están en `../contracts/` (`DeviceRegistry.sol`, `ColdChainMonitor.sol`) y el gateway en
-`../backend/` (`routes/iot.js`, `services/iotService.js` y `iot/`). El firmware irá en un repo aparte.
+La lógica on-chain está en el chaincode (`../fabric/chaincode/pharmatrace/contract/coldchain.go`) y el gateway en
+`../backend/` (`routes/iot.js`, `services/iotService.js` e `iot/`). El firmware va en
+[gastonhp1/Pharmatrace-firmware](https://github.com/gastonhp1/Pharmatrace-firmware).
 
 ## Probarlo sin hardware
 
-Con la red local y los contratos de lotes y cargamentos desplegados (ver el README de la raíz):
+Con la red levantada y el chaincode desplegado (`fabric/network/network.sh all`) y la API corriendo
+(`cd backend && npm start`, con `API_KEY` en `backend/.env`):
 
 ```bash
-# 1. Desplegar los contratos IoT (guarda las direcciones en los .env y exporta los ABIs)
-npm run deploy:iot
+export API=http://localhost:3001 KEY=<tu API_KEY>
+h=(-H "x-api-key: $KEY" -H 'content-type: application/json')
 
-# 2. Levantar el backend
-cd backend && npm start        # http://localhost:3001
+# 1. Una sola vez: el regulador autoriza la identidad del gateway (IOT_GATEWAY_IDENTITY, por defecto dist:User2)
+curl -X POST $API/api/iot/gateway/authorize "${h[@]}"
 
-# 3. Instalar el simulador y crear la clave del dispositivo (imprime la clave pública)
+# 2. Política (2–8 °C, hasta 30 min fuera de rango) y la clave de la valija
+curl -X POST $API/api/iot/policies "${h[@]}" -d '{"policyId":"pharma-2-8c","minTemp":200,"maxTemp":800,"maxExcursionSeconds":1800}'
 pip install -r iot/simulator/requirements.txt
-python3 iot/simulator/simulator.py keygen --key valija.pem
+python3 iot/simulator/simulator.py keygen --key valija.pem      # imprime la clave pública
+
+# 3. Registrar la valija y monitorear un cargamento existente (POST /api/cargo), por ejemplo C-1
+curl -X POST $API/api/iot/devices "${h[@]}" -d '{"deviceId":"VAL-001","pubKey":"0x...","calibrationExpiry":1893456000}'
+curl -X POST $API/api/iot/monitoring/start "${h[@]}" -d '{"cargoId":"C-1","deviceId":"VAL-001","policyId":"pharma-2-8c"}'
+
+# 4. Simular el viaje: normal | excursion | tamper
+python3 iot/simulator/simulator.py run --key valija.pem --device-id VAL-001 --scenario excursion --count 120 --gateway $API
+
+# 5. Anclar, ver el veredicto y cerrar
+curl -X POST $API/api/iot/cargo/C-1/anchor "${h[@]}"
+curl $API/api/iot/cargo/C-1
+curl -X POST $API/api/iot/monitoring/close "${h[@]}" -d '{"cargoId":"C-1"}'
 ```
 
-Después, con un cargamento ya creado (`POST /api/cargo/create`), por ejemplo `C-1`:
-
-```bash
-# 4. Registrar la valija (la clave pública es la que imprimió keygen) y empezar a monitorear
-curl -X POST localhost:3001/api/iot/devices -H 'content-type: application/json' \
-  -d '{"deviceId":"VAL-001","pubKey":"0x...","calibrationExpiry":1893456000}'
-curl -X POST localhost:3001/api/iot/monitoring/start -H 'content-type: application/json' \
-  -d '{"cargoId":"C-1","deviceId":"VAL-001","policyId":"pharma-2-8c"}'
-
-# 5. Simular el viaje: normal | excursion | tamper
-python3 iot/simulator/simulator.py run --key valija.pem --device-id VAL-001 --scenario excursion --count 120
-
-# 6. Anclar las lecturas, ver el veredicto y cerrar
-curl -X POST localhost:3001/api/iot/cargo/C-1/anchor
-curl localhost:3001/api/iot/cargo/C-1
-curl -X POST localhost:3001/api/iot/monitoring/close -H 'content-type: application/json' -d '{"cargoId":"C-1"}'
-```
-
-Qué esperar con la política de ejemplo `pharma-2-8c` (2–8 °C, hasta 30 min fuera de rango en total):
+Qué esperar con esa política:
 
 | Escenario | Resultado |
 | --- | --- |
-| `normal` | `Compliant` al cerrar |
-| `excursion --count 60` | Un tercio del viaje a ~10 °C: 20 min fuera de rango, dentro del presupuesto. `Compliant` |
-| `excursion --count 120` | 40 min fuera de rango: supera el presupuesto, `Compromised` al anclar |
-| `tamper` | Tapa abierta y sello roto: `Compromised` por el sello |
+| `normal` | `COMPLIANT` al cerrar |
+| `excursion --count 60` | Un tercio del viaje a ~10 °C: 20 min fuera de rango, dentro del presupuesto. `COMPLIANT` |
+| `excursion --count 120` | 40 min fuera de rango: supera el presupuesto, `COMPROMISED` al anclar |
+| `tamper` | Tapa abierta y sello roto: `COMPROMISED` por el sello |
 
-Para auditar una lectura: `GET /api/iot/cargo/C-1/proof/77` devuelve la prueba de Merkle, el payload y la firma.
-La prueba se verifica con `ColdChainMonitor.verifyReading` y la firma contra la clave de `DeviceRegistry`.
+Para auditar una lectura: `GET /api/iot/cargo/C-1/proof/77?verify=true` devuelve la prueba de Merkle, el payload y
+la firma, y le pide al chaincode (`VerifyReading`) que la compruebe contra la raíz anclada. La firma se verifica
+contra la clave pública de la valija (`GET /api/iot/devices/VAL-001`).
+
+Todo este recorrido está automatizado en `fabric/network/scripts/api-e2e.sh` (`./network.sh api`), que corre en la CI.
 
 ## Tests
 
 ```bash
-npm test                                      # contratos (incluye DeviceRegistry y ColdChainMonitor)
-npm run test:backend                          # formato, firmas, Merkle, ingesta y ventanas
-python3 -m unittest discover -s iot/simulator # simulador (mismo vector de prueba que el backend)
+cd backend && npm test                         # formato, firmas, Merkle, ingesta, ventanas y API
+cd fabric/chaincode/pharmatrace && go test ./... # chaincode, incluida la cadena de frío
+python3 -m unittest discover -s iot/simulator  # simulador (mismo vector de prueba que el backend)
 ```
 
 ## Configuración del gateway
 
-Variables opcionales en `backend/.env` (ver `backend/.env.example`): `IOT_GATEWAY_KEY` (cuenta que atesta,
-separada del fabricante), `IOT_API_KEY` (clave propia de las rutas que mandan transacciones; si falta se usa `API_KEY`), `IOT_DATA_DIR`,
+En `backend/.env` (ver `backend/.env.example`): `IOT_GATEWAY_IDENTITY` (identidad que ancla, `<org>:<usuario>`),
+`IOT_API_KEY` (clave propia de las rutas que mandan transacciones; si falta se usa `API_KEY`), `IOT_DATA_DIR`,
 `IOT_SAMPLE_SECONDS`, `IOT_MAX_CLOCK_SKEW_SECONDS` e `IOT_ANCHOR_INTERVAL_SECONDS` (anclaje automático).
-Sin `DEVICE_REGISTRY_ADDRESS` y `COLD_CHAIN_MONITOR_ADDRESS` las rutas IoT responden 503 y el resto de la API
-funciona igual.

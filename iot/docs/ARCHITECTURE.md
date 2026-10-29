@@ -1,60 +1,62 @@
 # Arquitectura IoT de PharmaTrace
 
-La **valija** (caja de transporte con sensores) viaja con un **cargamento** de `CargoTracker`. Mide el estado
-del lote, firma cada medición y un gateway las verifica y deja evidencia en la cadena.
+La **valija** (caja de transporte con sensores) viaja con un **cargamento**: un grupo de lotes que va de una
+organización a la siguiente. Mide el estado de los lotes, firma cada medición y un gateway las verifica y deja
+evidencia en el ledger de Fabric.
 
 ```
  valija (ESP32 + sensores + ATECC608)
    │  lecturas firmadas (21 B + firma 64 B)
    ▼
  gateway  ──  POST /api/iot/readings  (backend/, Express)
-   │  1. verifica la firma con la clave pública registrada on-chain
+   │  1. verifica la firma con la clave pública registrada en el ledger (GetDevice)
    │  2. rechaza repeticiones, desorden y relojes en el futuro
    │  3. guarda la lectura (hoy: archivo; en producción: base de datos)
    │
    │  cada tanto (o a pedido): POST /api/iot/cargo/:id/anchor
-   ▼
- ColdChainMonitor.anchorReadings   raíz de Merkle + mín/máx + segundos fuera de rango
- ColdChainMonitor.reportEvent      tapa abierta / golpe / sello roto
+   ▼  Fabric Gateway, con la identidad del gateway IoT (DistMSP User2), endosado por su org + el regulador
+ chaincode AnchorWindow        raíz de Merkle + mín/máx + segundos fuera de rango
+ chaincode ReportDeviceEvent   tapa abierta / golpe / sello roto
    │
    ▼
- veredicto:  Monitoring → Compliant | Compromised
+ veredicto:  MONITORING → COMPLIANT | COMPROMISED
 ```
 
-## Qué va on-chain y qué no
+## Qué va al ledger y qué no
 
 | Dato | Dónde | Por qué |
 | --- | --- | --- |
-| Clave pública del dispositivo, vencimiento de calibración | `DeviceRegistry` | Cualquiera puede re-verificar una firma |
-| Política (rango y presupuesto de excursión) | `ColdChainMonitor` | Inmutable: un cargamento se juzga con las reglas con las que salió |
-| Raíz de Merkle por ventana de lecturas | `ColdChainMonitor` | Una sola raíz prueba cientos de lecturas |
-| Segundos fuera de rango, mín/máx por ventana | `ColdChainMonitor` | El contrato decide el veredicto con esto |
-| Lecturas crudas | Backend (archivo/BD) | Costarían gas por cada punto y no aportan nada que la raíz no pruebe |
+| Clave pública de la valija, org dueña, vencimiento de calibración | `RegisterDevice` | Cualquiera puede re-verificar una firma |
+| Política (rango y presupuesto de excursión) | `SetColdChainPolicy` (solo el regulador) | Inmutable: un cargamento se juzga con las reglas con las que salió |
+| Raíz de Merkle por ventana de lecturas | `AnchorWindow` | Una sola raíz prueba cientos de lecturas |
+| Segundos fuera de rango, mín/máx por ventana | `AnchorWindow` | El chaincode decide el veredicto con esto |
+| Eventos (tipo, hora, hash de la lectura) | `ReportDeviceEvent` | Quedan en el registro de monitoreo para la auditoría |
+| Lecturas crudas | Backend (archivo/BD) | No aportan nada que la raíz no pruebe, y engordarían el ledger de todas las orgs |
 
-Para auditar una lectura: `GET /api/iot/cargo/:id/proof/:seq` devuelve la prueba, el payload y la firma. Con eso
-se verifica en `ColdChainMonitor.verifyReading` que la lectura pertenece a una ventana anclada, y contra la clave
-de `DeviceRegistry` que la firmó el dispositivo.
+Para auditar una lectura: `GET /api/iot/cargo/:id/proof/:seq?verify=true` devuelve la prueba, el payload y la firma,
+y le pide al chaincode (`VerifyReading`) que compruebe la prueba contra la raíz anclada. La firma se verifica contra
+la clave de `GetDevice`.
 
-## Contratos
+## Quién puede qué
 
-- **`DeviceRegistry`**: dueño (el fabricante) registra dispositivos y *attestors* (las cuentas del gateway).
-  `isOperationalAt(deviceId, ts)` dice si el dispositivo estaba activo y calibrado en ese momento: así se puede
-  anclar una ventana tarde (tras un corte de conectividad) siempre que el dispositivo estuviera calibrado cuando midió.
-- **`ColdChainMonitor`**: vincula un dispositivo a un cargamento bajo una política (`startMonitoring`), recibe
-  ventanas (`anchorReadings`) y eventos (`reportEvent`) solo de attestors, y cierra con un veredicto
-  (`closeMonitoring`). Chequea que las ventanas vengan en orden, sin solaparse y sin ser del futuro, y que una
-  ventana con temperatura fuera de rango informe tiempo fuera de rango.
+- **Cada org** registra sus valijas (`RegisterDevice`) y las da de baja (`SetDeviceActive`). El regulador también.
+- **El regulador** fija las políticas y autoriza a los gateways (`RegisterAttestor`, por certificado: el *client ID*
+  que devuelve `WhoAmI`). También puede revocarlos.
+- **El dueño del cargamento o un gateway autorizado** empieza el monitoreo (`StartMonitoring`). La valija tiene que
+  estar activa, calibrada y libre.
+- **Solo un gateway autorizado** ancla ventanas y reporta eventos.
+- **El tenedor del cargamento** (el dueño, o el destinatario mientras viaja) **o un gateway** lo cierra
+  (`CloseMonitoring`), y la valija queda libre.
 
-`DrugTracker` y `CargoTracker` **no se tocaron**. Un lote avanza por estados y no retrocede, así que un cargamento
-comprometido se informa en `ColdChainMonitor.getVerdict` y con el evento `CargoCompromised`, en vez de agregar un
-estado a los lotes. Los lotes del cargamento comparten el veredicto (se obtienen de `CargoTracker.getCargoInfo`).
+Los lotes del cargamento comparten el veredicto. Un veredicto `COMPROMISED` no bloquea los lotes: es evidencia para
+que el regulador decida un recall (`RecallBatch`).
 
 ## Reglas de veredicto
 
-- Segundos acumulados fuera de rango **>** presupuesto de la política → `Compromised`.
-- Evento `SealBroken` → `Compromised` en el acto.
-- `LidOpened` y `Shock` se registran para la auditoría pero no son fatales (la tapa se abre en cada traspaso).
-- `closeMonitoring` sin problemas → `Compliant`. Después de cerrar el veredicto es final y el dispositivo queda libre.
+- Segundos acumulados fuera de rango **>** presupuesto de la política → `COMPROMISED`.
+- Evento `SEAL_BROKEN` → `COMPROMISED` en el acto.
+- `LID_OPENED` y `SHOCK` se registran para la auditoría pero no son fatales (la tapa se abre en cada traspaso).
+- `CloseMonitoring` sin problemas → `COMPLIANT`. Después de cerrar el veredicto es final.
 
 ### Cómo se cuenta el tiempo fuera de rango
 
@@ -70,11 +72,11 @@ Es un prototipo. Lo que hay que resolver antes de usarlo con medicamentos reales
   base de datos con respaldo: son la evidencia que la raíz de Merkle prueba, y si se pierden la prueba no sirve.
 - **Huecos de datos:** si el dispositivo se apaga o pierde lecturas, hoy no se detecta. Una ventana con un hueco
   mayor a N períodos debería marcarse (y quizá contar como excursión).
-- **Valores y exigencias regulatorias:** los límites y presupuestos de `deploy-iot.js` son de ejemplo. Los reales
-  salen de los datos de estabilidad del producto, y hay que validar con calidad/regulatorio (ANMAT, BPD/GDP) qué
-  evidencia se exige y durante cuánto tiempo.
-- **Calibración trazable:** el vencimiento on-chain es la fecha que cargue el dueño; el certificado de calibración
+- **Valores y exigencias regulatorias:** los límites y presupuestos de ejemplo no son de ningún producto. Los
+  reales salen de los datos de estabilidad, y hay que validar con calidad/regulatorio (ANMAT, BPD/GDP) qué evidencia
+  se exige y durante cuánto tiempo.
+- **Calibración trazable:** el vencimiento en el ledger es la fecha que carga la org; el certificado de calibración
   del sensor (laboratorio acreditado) es el que le da valor.
-- **Autenticación de la API y custodia de claves:** ver `THREAT_MODEL.md`.
+- **Custodia de claves:** ver `THREAT_MODEL.md`.
 - **Reloj del dispositivo:** se espera GPS o RTC sincronizado. El gateway rechaza lo que está en el futuro, pero no
   detecta un reloj atrasado de forma consistente.

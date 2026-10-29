@@ -9,18 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  contracts:
-    name: Contracts (Hardhat)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-
   backend:
     name: Backend (node:test)
     runs-on: ubuntu-latest
@@ -47,28 +35,9 @@ jobs:
       - run: pip install -r iot/simulator/requirements.txt
       - run: python -m unittest discover -s iot/simulator
 
-  # Images: built, scanned (Trivy gate), pushed to GHCR and signed by the
+  # Image: built, scanned (Trivy gate), pushed to GHCR and signed by the
   # golden-path reusable workflow, the only signing identity the platform's
   # Kyverno policy trusts. PRs build + scan only; main pushes and signs.
-  image-chain:
-    name: Image (chain)
-    needs: contracts
-    uses: gastonhp1/secure-cicd-golden-path/.github/workflows/reusable-container.yml@main
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-      security-events: write
-    with:
-      image-name: pharmatrace-chain
-      context: .
-      push: ${{ github.event_name != 'pull_request' }}
-      platforms: linux/amd64
-      # Local dev chain only. Hardhat 2 still carries HIGH findings whose fix is
-      # the Hardhat 3 migration; they stay visible in the Security tab.
-      fail-on-severity: CRITICAL
-
   image-api:
     name: Image (API)
     needs: backend
@@ -86,28 +55,8 @@ jobs:
       push: ${{ github.event_name != 'pull_request' }}
       platforms: linux/amd64
 
-  # Pin each signed digest in the GitOps repo: the golden-path promote job
-  # verifies the signature and opens an auto-merge PR per image.
-  promote-chain:
-    name: Promote (chain) → local
-    if: github.ref == 'refs/heads/main'
-    needs: image-chain
-    uses: gastonhp1/secure-cicd-golden-path/.github/workflows/reusable-gitops-promote.yml@main
-    permissions:
-      contents: read
-      id-token: write
-      packages: read
-    with:
-      environment: local
-      image: ${{ needs.image-chain.outputs.image }}
-      digest: ${{ needs.image-chain.outputs.digest }}
-      version: ${{ needs.image-chain.outputs.version }}
-      values-files: gitops/apps/pharmatrace/values-local.yaml
-      image-path: .images.chain
-      auto-merge: true
-    secrets:
-      GITOPS_APP_ID: ${{ secrets.GITOPS_APP_ID }}
-      GITOPS_APP_PRIVATE_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+  # Pin the signed digest in the GitOps repo: the golden-path promote job
+  # verifies the signature and opens an auto-merge PR.
   promote-api:
     name: Promote (API) → local
     if: github.ref == 'refs/heads/main'
