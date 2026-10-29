@@ -165,11 +165,11 @@ func TestBatchRules(t *testing.T) {
 			return err
 		}
 	}
-	h.fails("only a manufacturer", dist, "user1", registerFn("B1", "07791234567890", "2028-01-01"))
-	h.fails("invalid GTIN", lab, "user1", registerFn("B1", "77-9", "2028-01-01"))
+	h.fails("FORBIDDEN: only a manufacturer", dist, "user1", registerFn("B1", "07791234567890", "2028-01-01"))
+	h.fails("INVALID: invalid GTIN", lab, "user1", registerFn("B1", "77-9", "2028-01-01"))
 	h.fails("invalid expiry", lab, "user1", registerFn("B1", "07791234567890", "31/01/2028"))
 	h.register("B1")
-	h.fails("already exists", lab, "user1", registerFn("B1", "07791234567890", "2028-01-01"))
+	h.fails("CONFLICT: batch B1 already exists", lab, "user1", registerFn("B1", "07791234567890", "2028-01-01"))
 
 	dispatch := func(to string) func(ctx ctxT) error {
 		return func(ctx ctxT) error { _, err := h.cc.DispatchBatch(ctx, "B1", to); return err }
@@ -178,7 +178,7 @@ func TestBatchRules(t *testing.T) {
 
 	h.fails("belongs to LabMSP", dist, "user1", dispatch(farma))
 	h.fails("can only dispatch to a distributor", lab, "user1", dispatch(farma)) // no skipping steps
-	h.fails("not registered", lab, "user1", dispatch("NopeMSP"))
+	h.fails("NOT_FOUND: org NopeMSP is not registered", lab, "user1", dispatch("NopeMSP"))
 	h.fails("not in transit", dist, "user1", receive)
 
 	h.must(lab, "user1", dispatch(dist))
@@ -217,8 +217,14 @@ func TestRecall(t *testing.T) {
 		t.Fatalf("after recall: %+v", b)
 	}
 	h.fails("already recalled", reg, "inspector", recall)
-	h.fails("not in transit", dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveBatch(ctx, "B1"); return err })
-	h.fails("cannot change anymore", lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchBatch(ctx, "B1", dist); return err })
+	h.fails("FORBIDDEN", lab, "user1", func(ctx ctxT) error { _, err := h.cc.RecallBatch(ctx, "B1", "x"); return err })
+
+	// The recipient still takes custody of a batch recalled on the way, to quarantine it.
+	h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveBatch(ctx, "B1"); return err })
+	if b := h.batch("B1"); b.Owner != dist || b.State != StateRecalled || b.PendingTo != "" {
+		t.Fatalf("recalled batch after receive: %+v", b)
+	}
+	h.fails("cannot change anymore", dist, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchBatch(ctx, "B1", farma); return err })
 
 	h.register("B2")
 	h.moveTo("B2", lab, dist)

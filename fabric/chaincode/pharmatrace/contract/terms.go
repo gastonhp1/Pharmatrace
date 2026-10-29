@@ -43,7 +43,7 @@ func (c *PharmaTrace) SetCommercialTerms(ctx contractapi.TransactionContextInter
 		return err
 	}
 	if terms.BatchID != batchID {
-		return fmt.Errorf("the terms are for batch %q, not %q", terms.BatchID, batchID)
+		return invalid("the terms are for batch %q, not %q", terms.BatchID, batchID)
 	}
 
 	batch, err := c.ownedBatch(ctx, batchID)
@@ -51,7 +51,7 @@ func (c *PharmaTrace) SetCommercialTerms(ctx contractapi.TransactionContextInter
 		return err
 	}
 	if terms.Seller != batch.Owner {
-		return fmt.Errorf("the seller has to be the owner of the batch (%s)", batch.Owner)
+		return invalid("the seller has to be the owner of the batch (%s)", batch.Owner)
 	}
 	sellerRole, err := orgRole(ctx, terms.Seller)
 	if err != nil {
@@ -62,7 +62,7 @@ func (c *PharmaTrace) SetCommercialTerms(ctx contractapi.TransactionContextInter
 		return err
 	}
 	if buyerRole == "" || nextRole[sellerRole] != buyerRole {
-		return fmt.Errorf("a %s sells to a %s, %s is %q", sellerRole, nextRole[sellerRole], terms.Buyer, buyerRole)
+		return invalid("a %s sells to a %s, %s is %q", sellerRole, nextRole[sellerRole], terms.Buyer, buyerRole)
 	}
 
 	return ctx.GetStub().PutPrivateData(termsCollection[sellerRole], batchID, raw)
@@ -74,7 +74,7 @@ func (c *PharmaTrace) SetCommercialTerms(ctx contractapi.TransactionContextInter
 func (c *PharmaTrace) ReadCommercialTerms(ctx contractapi.TransactionContextInterface, batchID string, sellerRole string) (*CommercialTerms, error) {
 	collection, ok := termsCollection[sellerRole]
 	if !ok {
-		return nil, fmt.Errorf("invalid leg %q: use %s or %s", sellerRole, RoleManufacturer, RoleDistributor)
+		return nil, invalid("invalid leg %q: use %s or %s", sellerRole, RoleManufacturer, RoleDistributor)
 	}
 	msp, err := clientMSP(ctx)
 	if err != nil {
@@ -82,17 +82,21 @@ func (c *PharmaTrace) ReadCommercialTerms(ctx contractapi.TransactionContextInte
 	}
 	data, err := ctx.GetStub().GetPrivateData(collection, batchID)
 	if err != nil {
+		// With memberOnlyRead the peer itself refuses non-members of the collection.
+		if strings.Contains(err.Error(), "does not have read access") {
+			return nil, forbidden("%s is not a member of %s", msp, collection)
+		}
 		return nil, fmt.Errorf("could not read %s: %w", collection, err)
 	}
 	if data == nil {
-		return nil, fmt.Errorf("no terms for batch %s in %s", batchID, collection)
+		return nil, notFound("no terms for batch %s in %s", batchID, collection)
 	}
 	var terms CommercialTerms
 	if err := json.Unmarshal(data, &terms); err != nil {
 		return nil, fmt.Errorf("corrupt terms: %w", err)
 	}
 	if msp != terms.Seller && msp != terms.Buyer {
-		return nil, fmt.Errorf("%s is not part of these terms", msp)
+		return nil, forbidden("%s is not part of these terms", msp)
 	}
 	return &terms, nil
 }
@@ -103,7 +107,7 @@ func (c *PharmaTrace) ReadCommercialTerms(ctx contractapi.TransactionContextInte
 func (c *PharmaTrace) VerifyCommercialTerms(ctx contractapi.TransactionContextInterface, batchID string, sellerRole string) (bool, error) {
 	collection, ok := termsCollection[sellerRole]
 	if !ok {
-		return false, fmt.Errorf("invalid leg %q: use %s or %s", sellerRole, RoleManufacturer, RoleDistributor)
+		return false, invalid("invalid leg %q: use %s or %s", sellerRole, RoleManufacturer, RoleDistributor)
 	}
 	_, raw, err := transientTerms(ctx)
 	if err != nil {
@@ -114,7 +118,7 @@ func (c *PharmaTrace) VerifyCommercialTerms(ctx contractapi.TransactionContextIn
 		return false, fmt.Errorf("could not read the hash from %s: %w", collection, err)
 	}
 	if stored == nil {
-		return false, fmt.Errorf("no terms for batch %s in %s", batchID, collection)
+		return false, notFound("no terms for batch %s in %s", batchID, collection)
 	}
 	sum := sha256.Sum256(raw)
 	return bytes.Equal(sum[:], stored), nil
@@ -130,26 +134,26 @@ func transientTerms(ctx contractapi.TransactionContextInterface) (*CommercialTer
 	}
 	data, ok := transient[TransientTermsKey]
 	if !ok || len(data) == 0 {
-		return nil, nil, fmt.Errorf("the terms have to be sent in the transient map under %q", TransientTermsKey)
+		return nil, nil, invalid("the terms have to be sent in the transient map under %q", TransientTermsKey)
 	}
 
 	var terms CommercialTerms
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&terms); err != nil {
-		return nil, nil, fmt.Errorf("invalid terms: %w", err)
+		return nil, nil, invalid("invalid terms: %v", err)
 	}
 	switch {
 	case strings.TrimSpace(terms.BatchID) == "":
-		return nil, nil, fmt.Errorf("terms.batchId is required")
+		return nil, nil, invalid("terms.batchId is required")
 	case terms.Seller == "" || terms.Buyer == "":
-		return nil, nil, fmt.Errorf("terms.seller and terms.buyer are required")
+		return nil, nil, invalid("terms.seller and terms.buyer are required")
 	case !pricePattern.MatchString(terms.UnitPrice):
-		return nil, nil, fmt.Errorf("terms.unitPrice has to be a positive decimal like 1234.50")
+		return nil, nil, invalid("terms.unitPrice has to be a positive decimal like 1234.50")
 	case len(terms.Currency) != 3 || strings.ToUpper(terms.Currency) != terms.Currency:
-		return nil, nil, fmt.Errorf("terms.currency has to be an ISO 4217 code like ARS")
+		return nil, nil, invalid("terms.currency has to be an ISO 4217 code like ARS")
 	case terms.Quantity <= 0:
-		return nil, nil, fmt.Errorf("terms.quantity has to be positive")
+		return nil, nil, invalid("terms.quantity has to be positive")
 	}
 
 	raw, err := json.Marshal(terms)

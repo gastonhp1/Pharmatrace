@@ -1,6 +1,8 @@
-# PharmaTrace REST API. Build from the repo root (it needs the ABIs in scripts/abi):
+# PharmaTrace REST API on Hyperledger Fabric. Build from the repo root:
 #   docker build -f backend/Dockerfile .
-# All configuration comes from the environment (see backend/.env.example).
+# All configuration comes from the environment (see backend/.env.example). The Fabric
+# identities (certificates and keys) are not in the image: mount them and point
+# FABRIC_ORGS_DIR at them.
 FROM node:22-slim
 
 ENV NODE_ENV=production \
@@ -17,7 +19,6 @@ RUN npm ci --omit=dev --no-audit --no-fund \
  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
            /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
-COPY scripts/abi /app/scripts/abi
 COPY backend ./
 
 USER 10001:10001

@@ -5,7 +5,8 @@
 #   ./network.sh up        generate the identities and start orderers and peers
 #   ./network.sh channel   create the "pharmatrace" channel and join everyone to it
 #   ./network.sh deploy    build, install, approve and commit the chaincode; register the orgs
-#   ./network.sh smoke     run the end-to-end scenario (scripts/smoke.sh)
+#   ./network.sh smoke     run the end-to-end scenario with the peer CLI (scripts/smoke.sh)
+#   ./network.sh api       start the REST API and run the scenario over HTTP (scripts/api-e2e.sh)
 #   ./network.sh all       up + channel + deploy + smoke
 #   ./network.sh down      stop everything and delete the generated material
 #
@@ -173,7 +174,8 @@ case "${1:-}" in
   channel) channel ;;
   deploy) deploy ;;
   smoke) bash scripts/smoke.sh ;;
+  api) bash scripts/api-e2e.sh ;;
   all) up && channel && deploy && bash scripts/smoke.sh ;;
   down) down ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,13p' network.sh | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

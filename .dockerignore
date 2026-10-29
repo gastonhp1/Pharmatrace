@@ -1,12 +1,11 @@
 **/node_modules
 **/.env
 **/.env.*
-artifacts
-cache
 coverage
 backend/data
 **/test
 iot
+fabric
 .git
 .github
 .idea

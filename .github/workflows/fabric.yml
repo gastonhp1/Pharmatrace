@@ -2,10 +2,10 @@ name: Fabric
 
 on:
   pull_request:
-    paths: ["fabric/**", ".github/workflows/fabric.yml"]
+    paths: ["fabric/**", "backend/**", "iot/**", ".github/workflows/fabric.yml"]
   push:
     branches: [main]
-    paths: ["fabric/**", ".github/workflows/fabric.yml"]
+    paths: ["fabric/**", "backend/**", "iot/**", ".github/workflows/fabric.yml"]
   workflow_dispatch:
 
 permissions:
@@ -45,7 +45,7 @@ jobs:
           tail -n 60 "$RUNNER_TEMP/job.log" 2>/dev/null | python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=Last lines of the log::" + m)'
 
   network:
-    name: Network (4 orgs + Raft, end to end)
+    name: Network + API (4 orgs + Raft, end to end)
     needs: chaincode
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -67,6 +67,21 @@ jobs:
       - run: ./network.sh channel
       - run: ./network.sh deploy
       - run: ./network.sh smoke
+      # The REST API against the same network, with the valija simulator uploading signed readings.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the API and the simulator
+        working-directory: .
+        run: |
+          npm ci --prefix backend
+          pip install -r iot/simulator/requirements.txt
+      - run: ./network.sh api
       # Deploying again must upgrade in place (sequence 2) and keep the data.
       - run: CC_VERSION=0.2 ./network.sh deploy && ./network.sh smoke
       - name: Show the failure on the PR

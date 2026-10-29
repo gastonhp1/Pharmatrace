@@ -27,13 +27,26 @@ const (
 	StateRecalled       = "RECALLED"        // pulled from the market by the regulator
 )
 
+// Cargo states.
+const (
+	CargoOpen      = "OPEN"       // created, its batches are locked to it
+	CargoInTransit = "IN_TRANSIT" // dispatched with all its batches
+	CargoDelivered = "DELIVERED"  // received: the batches are free again
+	CargoDissolved = "DISSOLVED"  // undone by its owner before dispatching it
+)
+
+// MaxBatchesPerCargo bounds the work (and the endorsement) of one cargo transaction.
+const MaxBatchesPerCargo = 100
+
 // Object types used to build composite keys.
 const (
 	objOrg        = "org"
 	objBatch      = "batch"
 	objOwnerIndex = "owner~batch"
+	objCargo      = "cargo"
 	objPolicy     = "coldpolicy"
 	objAttestor   = "attestor"
+	objDevice     = "device"
 	objMonitoring = "monitoring"
 )
 
@@ -58,6 +71,7 @@ type Batch struct {
 	Owner         string `json:"owner"`     // MSP ID of the org that holds it
 	PendingTo     string `json:"pendingTo"` // MSP ID of the recipient while IN_TRANSIT, "" otherwise
 	State         string `json:"state"`
+	Cargo         string `json:"cargo"`      // cargo it travels in, "" when it moves on its own
 	PatientRef    string `json:"patientRef"` // sha256 of a patient reference, set when dispensed
 	RecallReason  string `json:"recallReason"`
 	StateBefore   string `json:"stateBefore"` // state before the recall
@@ -73,6 +87,18 @@ type HistoryEntry struct {
 	Batch     *Batch `json:"batch" metadata:",optional"`
 }
 
+// Cargo is a group of batches that travel together from one org to the next, with one IoT
+// valija watching all of them. While a batch is in a cargo it only moves with the cargo.
+type Cargo struct {
+	ID        string   `json:"id"`
+	Owner     string   `json:"owner"`
+	PendingTo string   `json:"pendingTo"`
+	BatchIDs  []string `json:"batchIds"`
+	State     string   `json:"state"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
+}
+
 // CommercialTerms is what a seller and a buyer agreed for a batch. It travels in the transient
 // map and is stored only in a private data collection shared by the two orgs: the rest of the
 // channel only sees its hash.
@@ -85,8 +111,18 @@ type CommercialTerms struct {
 	Quantity  int    `json:"quantity"`
 }
 
-// ColdChainPolicy is the temperature range a batch has to stay in. Temperatures are in hundredths
-// of a degree Celsius (2.00 C = 200), like in the Solidity ColdChainMonitor.
+// Device is an IoT valija. Its public key lets anyone re-check the signature of a reading.
+type Device struct {
+	ID                string `json:"id"`
+	Org               string `json:"org"`               // MSP ID of the org that registered it
+	PubKey            string `json:"pubKey"`            // P-256 X || Y, 64 bytes in hex
+	CalibrationExpiry int64  `json:"calibrationExpiry"` // unix seconds
+	Active            bool   `json:"active"`
+	ActiveCargo       string `json:"activeCargo"` // cargo it is monitoring, "" when free
+}
+
+// ColdChainPolicy is the temperature range a cargo has to stay in. Temperatures are in
+// hundredths of a degree Celsius (2.00 C = 200).
 type ColdChainPolicy struct {
 	ID                  string `json:"id"`
 	MinTemp             int    `json:"minTemp"`
@@ -120,20 +156,29 @@ const (
 	DeviceEventSealBroken = "SEAL_BROKEN"
 )
 
-// Monitoring is the cold-chain session of a batch: which valija watched it, under which policy,
-// and what came out of it.
+// DeviceEvent is a lid opening, a shock or a broken seal, with the hash of the reading that
+// showed it.
+type DeviceEvent struct {
+	Kind        string `json:"kind"`
+	Timestamp   int64  `json:"timestamp"`
+	PayloadHash string `json:"payloadHash"`
+}
+
+// Monitoring is the cold-chain session of a cargo: which valija watched it, under which policy,
+// and what came out of it. Every batch of the cargo shares the verdict.
 type Monitoring struct {
-	BatchID          string   `json:"batchId"`
-	DeviceID         string   `json:"deviceId"`
-	PolicyID         string   `json:"policyId"`
-	StartedAt        string   `json:"startedAt"`
-	LastWindowEnd    int64    `json:"lastWindowEnd"`
-	ReadingCount     int      `json:"readingCount"`
-	ExcursionSeconds int      `json:"excursionSeconds"`
-	Roots            []string `json:"roots"`
-	Verdict          string   `json:"verdict"`
-	Reason           string   `json:"reason"`
-	Closed           bool     `json:"closed"`
+	CargoID          string        `json:"cargoId"`
+	DeviceID         string        `json:"deviceId"`
+	PolicyID         string        `json:"policyId"`
+	StartedAt        string        `json:"startedAt"`
+	LastWindowEnd    int64         `json:"lastWindowEnd"`
+	ReadingCount     int           `json:"readingCount"`
+	ExcursionSeconds int           `json:"excursionSeconds"`
+	Roots            []string      `json:"roots"`
+	Events           []DeviceEvent `json:"events"`
+	Verdict          string        `json:"verdict"`
+	Reason           string        `json:"reason"`
+	Closed           bool          `json:"closed"`
 }
 
 // Attestor is an IoT gateway identity allowed to anchor readings.
@@ -151,8 +196,16 @@ type batchEvent struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+type cargoEvent struct {
+	CargoID  string   `json:"cargoId"`
+	Owner    string   `json:"owner"`
+	State    string   `json:"state"`
+	To       string   `json:"to,omitempty"`
+	BatchIDs []string `json:"batchIds"`
+}
+
 type coldChainEvent struct {
-	BatchID          string `json:"batchId"`
+	CargoID          string `json:"cargoId"`
 	Verdict          string `json:"verdict"`
 	ExcursionSeconds int    `json:"excursionSeconds"`
 	Reason           string `json:"reason,omitempty"`
@@ -165,6 +218,9 @@ const (
 	EventBatchReceived       = "BatchReceived"
 	EventBatchDispensed      = "BatchDispensed"
 	EventBatchRecalled       = "BatchRecalled"
+	EventCargoCreated        = "CargoCreated"
+	EventCargoDispatched     = "CargoDispatched"
+	EventCargoReceived       = "CargoReceived"
 	EventReadingsAnchored    = "ReadingsAnchored"
 	EventColdChainCompromise = "ColdChainCompromised"
 	EventMonitoringClosed    = "MonitoringClosed"

@@ -1,8 +1,4 @@
-const { ethers } = require("ethers");
 const { ApiError } = require("./errors");
-
-// Highest value of the State enum in DrugTracker.sol (InUse).
-const MAX_STATE = 5;
 
 function requireString(value, name) {
     if (typeof value !== "string" || value.trim() === "") {
@@ -11,19 +7,11 @@ function requireString(value, name) {
     return value;
 }
 
-function requireAddress(value, name) {
-    if (typeof value !== "string" || !ethers.isAddress(value)) {
-        throw new ApiError(400, `Missing or invalid ${name}`);
+function requireStringArray(value, name) {
+    if (!Array.isArray(value) || value.length === 0 || value.some((v) => typeof v !== "string" || v.trim() === "")) {
+        throw new ApiError(400, `${name} must be a non-empty array of strings`);
     }
     return value;
-}
-
-function requireState(value) {
-    const state = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
-    if (!Number.isInteger(state) || state < 0 || state > MAX_STATE) {
-        throw new ApiError(400, `newState must be an integer between 0 and ${MAX_STATE}`);
-    }
-    return state;
 }
 
 function requireInteger(value, name, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -42,4 +30,4 @@ function requireHexBytes(value, name, bytes) {
     return `0x${clean}`;
 }
 
-module.exports = { requireString, requireAddress, requireState, requireInteger, requireHexBytes };
+module.exports = { requireString, requireStringArray, requireInteger, requireHexBytes };

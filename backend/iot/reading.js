@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { ethers } = require("ethers");
+const { toHex } = require("../lib/hex");
 
 // Wire format of one reading, 21 bytes, big-endian (see iot/docs/READING_FORMAT.md):
 //
@@ -13,7 +13,7 @@ const { ethers } = require("ethers");
 //       17     4  lonE5      int32   longitude * 1e5
 //
 // The device signs SHA-256(payload) with its P-256 key (what an ATECC608 does natively); the
-// signature is the raw 64 bytes r || s. The Merkle leaf is keccak256(payload).
+// signature is the raw 64 bytes r || s. The Merkle leaf is SHA-256(payload).
 const READING_SIZE = 21;
 const SIGNATURE_SIZE = 64;
 const PUBLIC_KEY_SIZE = 64;
@@ -49,9 +49,10 @@ function decodeReading(buf) {
     };
 }
 
-// Merkle leaf of a reading. This is the value that verifyReading checks on-chain.
+// Merkle leaf of a reading, 0x-prefixed hex. This is the value the chaincode's VerifyReading
+// checks against an anchored root.
 function leafHash(payload) {
-    return ethers.keccak256(payload);
+    return toHex(crypto.createHash("sha256").update(payload).digest());
 }
 
 // Accepts hex with or without 0x. Returns null if it is not hex or has the wrong length.
