@@ -258,7 +258,7 @@ cmd_rotate_orderer_tls() {
   local port i
   port=$(orderer_admin_port "$n")
   for ((i = 1; i <= 30; i++)); do
-    if osnadmin channel info --channelID "$CHANNEL" -o "localhost:$port" --ca-file "$ORDERER_CA" \
+    if osnadmin channel list --channelID "$CHANNEL" -o "localhost:$port" --ca-file "$ORDERER_CA" \
       --client-cert "$dir/server.crt" --client-key "$dir/server.key" >"$WORK/info" 2>&1 &&
       grep -q 'consenter' "$WORK/info" && grep -q '"active"' "$WORK/info"; then
       ok "$host is back as an active consenter with its new certificate"
