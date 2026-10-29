@@ -97,7 +97,13 @@ cada una aprueba lo que va a correr.
   Si dos transacciones tocan la misma clave a la vez, la segunda falla al validar (`MVCC_READ_CONFLICT`) y la API
   responde 409.
 
-## 8. Ejercicios sugeridos
+## 8. La PKI
+
+Todo lo anterior descansa en certificados. Cada org emite los suyos con su Fabric CA, el rol del gateway IoT va
+como atributo dentro del certificado, y operar la red incluye renovarlos, rotarlos y revocarlos sin cortarla. Está
+explicado paso a paso, con los comandos, en [PKI.md](PKI.md).
+
+## 9. Ejercicios sugeridos
 
 1. Levantá la red, corré el smoke y después hacé a mano un despacho de la droguería a la farmacia
    con `peer chaincode invoke` (copiá la función `invoke` del smoke).
@@ -108,7 +114,7 @@ cada una aprueba lo que va a correr.
    de la transacción, con su test en `contract/batch_test.go`.
 5. Mirá las métricas de un peer: `curl localhost:9451/metrics | grep ledger_blockchain_height`.
 
-## 9. Referencias
+## 10. Referencias
 
 - Documentación oficial: https://hyperledger-fabric.readthedocs.io (sección *Key Concepts*)
 - Endorsement policies y SBE: https://hyperledger-fabric.readthedocs.io/en/latest/endorsement-policies.html

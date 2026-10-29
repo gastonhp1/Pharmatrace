@@ -91,10 +91,13 @@ jobs:
         run: |
           # Its own log through a pipe: the full output is there even when it fails.
           set -o pipefail
+          annotate() { python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::%s title=PKI test::%s" % (sys.argv[1], m))' "$1"; }
           bash scripts/pki-test.sh 2>&1 | tee "$RUNNER_TEMP/pki.log" || {
-            tail -n 60 "$RUNNER_TEMP/pki.log" | python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=PKI test::" + m)'
+            tail -n 60 "$RUNNER_TEMP/pki.log" | annotate error
             exit 1
           }
+          # What each runbook step proved, visible on the PR.
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/pki.log" | grep -E '^(ok|==>) ' | annotate notice
       - name: Show the failure on the PR
         if: failure()
         env: { BASH_ENV: "" }
