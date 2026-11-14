@@ -1,0 +1,63 @@
+# PharmaTrace network on Kubernetes. Installed in two phases by fabric/network/k8s.sh:
+#   1. nodes.enabled=false: only the CAs start.
+#   2. Identities are issued from outside the cluster (scripts/pki.sh, the same runbook as on Docker)
+#      and stored as two Secrets per node: <node>-msp and <node>-tls. Then nodes.enabled=true.
+# Private keys are never in these values or in the chart: they only exist in those Secrets.
+
+fabric:
+  version: "3.1.5"
+  caVersion: "1.5.22"
+  logging: INFO
+
+storage:
+  className: ""        # "" = the cluster default (kind: standard, AKS: managed-csi)
+  ca: 256Mi
+  orderer: 1Gi
+  peer: 1Gi
+
+# Secret with the CAs' bootstrap admin password, key "password". Created by k8s.sh.
+caAdminSecret: ca-admin
+
+cas:
+  - ca-orderer
+  - ca-lab
+  - ca-dist
+  - ca-farma
+  - ca-reg
+
+nodes:
+  enabled: false
+
+orderer:
+  mspId: OrdererMSP
+  names: [orderer0, orderer1, orderer2]
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+
+peers:
+  - name: peer0-lab
+    mspId: LabMSP
+    ccName: peer0lab        # peername in the chaincode address: cc-<ccName>:9999
+  - name: peer0-dist
+    mspId: DistMSP
+    ccName: peer0dist
+  - name: peer0-farma
+    mspId: FarmaMSP
+    ccName: peer0farma
+  - name: peer0-reg
+    mspId: RegMSP
+    ccName: peer0reg
+peer:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+
+# Chaincode as a service: one Deployment per org running the installed package.
+chaincode:
+  enabled: false
+  packageId: ""
+  image:
+    repository: pharmatrace-chaincode
+    tag: "0.1"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }

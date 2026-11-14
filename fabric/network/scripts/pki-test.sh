@@ -42,12 +42,12 @@ step "3. Rotate orderer1's TLS certificate (channel config update of the Raft co
 pki rotate-orderer-tls 1
 # With orderer0 down, ordering needs orderer1 and orderer2: it only works if orderer2 accepts
 # orderer1's new certificate.
-docker stop orderer0.orderer.pharmatrace.ar >/dev/null
+node_stop orderer0.orderer.pharmatrace.ar
 export ORDERER_ADDR=localhost:8050 ORDERER_HOST=orderer1.orderer.pharmatrace.ar
 retry 10 invoke lab User1 "lab reg" "$(register_batch "PKI-$RUN-1")" >/dev/null ||
   fatal "no quorum with orderer0 down: orderer1's new certificate is not working"
 ok "committed by orderer1 + orderer2, with orderer1 on its new certificate"
-docker start orderer0.orderer.pharmatrace.ar >/dev/null
+node_start orderer0.orderer.pharmatrace.ar
 export ORDERER_ADDR=localhost:7050 ORDERER_HOST=orderer0.orderer.pharmatrace.ar
 retry 20 invoke lab User1 "lab reg" "$(register_batch "PKI-$RUN-2")" >/dev/null || fatal "orderer0 did not come back"
 ok "orderer0 is back and ordering"

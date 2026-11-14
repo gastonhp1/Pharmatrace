@@ -89,3 +89,6 @@ retry() {
   done
   return 1
 }
+
+# shellcheck source=scripts/runtime.sh
+source "$NETWORK_DIR/scripts/runtime.sh"

@@ -1,0 +1,11 @@
+PharmaTrace network in namespace {{ .Release.Namespace }}.
+{{- if not .Values.nodes.enabled }}
+
+Phase 1: only the CAs are running. Issue the identities and start the nodes with:
+  fabric/network/k8s.sh up
+{{- else }}
+
+CAs, orderers ({{ join ", " .Values.orderer.names }}) and {{ len .Values.peers }} peers.
+{{- if .Values.chaincode.enabled }} Chaincode package {{ .Values.chaincode.packageId }}.{{ end }}
+  kubectl -n {{ .Release.Namespace }} get pods
+{{- end }}

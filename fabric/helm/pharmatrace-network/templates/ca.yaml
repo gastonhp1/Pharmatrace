@@ -1,0 +1,59 @@
+{{- range $name := .Values.cas }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: ca
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+  ports:
+    - { name: https, port: 7054, targetPort: 7054 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: ca
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "pt.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/component: ca
+    spec:
+      containers:
+        - name: ca
+          image: hyperledger/fabric-ca:{{ $.Values.fabric.caVersion }}
+          # The bootstrap admin only matters on the first start, when the CA creates its database.
+          command: [sh, -c, 'fabric-ca-server start -b "admin:$CA_ADMIN_SECRET"']
+          env:
+            - { name: FABRIC_CA_HOME, value: /etc/hyperledger/fabric-ca-server }
+            - { name: FABRIC_CA_SERVER_TLS_ENABLED, value: "true" }
+            - { name: FABRIC_CA_SERVER_CA_NAME, value: {{ $name }} }
+            - { name: FABRIC_CA_SERVER_PORT, value: "7054" }
+            - { name: FABRIC_CA_SERVER_CSR_CN, value: {{ $name }} }
+            - { name: FABRIC_CA_SERVER_CSR_HOSTS, value: "{{ $name }},{{ $name }}.{{ $.Release.Namespace }}.svc,localhost,127.0.0.1" }
+            - name: CA_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ $.Values.caAdminSecret }}, key: password }
+          ports:
+            - { name: https, containerPort: 7054 }
+          readinessProbe:
+            tcpSocket: { port: 7054 }
+            periodSeconds: 3
+          volumeMounts:
+            - { name: data, mountPath: /etc/hyperledger/fabric-ca-server }
+  {{- include "pt.volumeClaim" (dict "root" $ "size" $.Values.storage.ca) | nindent 2 }}
+{{- end }}

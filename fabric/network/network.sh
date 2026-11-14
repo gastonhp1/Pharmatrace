@@ -73,7 +73,7 @@ up() {
 channel() {
   mkdir -p channel-artifacts
   info "Creating the genesis block of channel $CHANNEL"
-  FABRIC_CFG_PATH="$NETWORK_DIR" configtxgen -profile PharmaTraceChannel \
+  FABRIC_CFG_PATH="${CONFIGTX_DIR:-$NETWORK_DIR}" configtxgen -profile PharmaTraceChannel \
     -outputBlock "channel-artifacts/$CHANNEL.block" -channelID "$CHANNEL"
 
   # Fabric 2.3+ has no system channel: each orderer joins the channel through its admin API.
@@ -103,7 +103,7 @@ package_chaincode() {
   tmp=$(mktemp -d)
   mkdir -p "$tmp/src" "$tmp/pkg"
   cat >"$tmp/src/connection.json" <<EOF
-{ "address": "{{.peername}}_${CC_NAME}:9999", "dial_timeout": "10s", "tls_required": false }
+{ "address": "$CCAAS_ADDRESS", "dial_timeout": "10s", "tls_required": false }
 EOF
   cat >"$tmp/pkg/metadata.json" <<EOF
 { "type": "ccaas", "label": "${CC_NAME}_${CC_VERSION}" }
@@ -142,8 +142,12 @@ deploy() {
 
   # Each org runs its own chaincode container, identified by the package ID.
   info "Starting the chaincode containers"
-  CHAINCODE_ID="$pkg_id" CHAINCODE_VERSION="$CC_VERSION" "${COMPOSE[@]}" --profile chaincode up -d \
-    peer0lab_pharmatrace peer0dist_pharmatrace peer0farma_pharmatrace peer0reg_pharmatrace
+  if [[ $RUNTIME == k8s ]]; then
+    k8s_chaincode_up "$pkg_id"
+  else
+    CHAINCODE_ID="$pkg_id" CHAINCODE_VERSION="$CC_VERSION" "${COMPOSE[@]}" --profile chaincode up -d \
+      peer0lab_pharmatrace peer0dist_pharmatrace peer0farma_pharmatrace peer0reg_pharmatrace
+  fi
 
   use_org reg Admin
   seq=$(next_sequence)
