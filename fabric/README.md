@@ -108,8 +108,9 @@ go test ./...
 2. ~~API con el Fabric Gateway SDK (`backend/`), con el gateway IoT anclando en el chaincode.~~
 3. ~~PKI: una Fabric CA por organización, el gateway IoT por atributo del certificado y el runbook
    de certificados (renovar, rotar el TLS de un orderer, revocar con CRL). Ver [`docs/PKI.md`](docs/PKI.md).~~
-4. **Kubernetes**: la red en kind y después en AKS, con el operador de Fabric o charts de Helm,
-   sincronizada por ArgoCD desde el repo de GitOps.
+4. Kubernetes: ~~chart de Helm propio y la red en kind, probada en CI (ver [`docs/KUBERNETES.md`](docs/KUBERNETES.md))~~.
+   Falta AKS: imagen del chaincode en un registro, gRPC expuesto con TLS passthrough, Secrets desde Key Vault y
+   ArgoCD desde el repo de GitOps.
 5. **Operación**: métricas de peers y orderers en Prometheus/Grafana (ya exponen `/metrics` en
    los puertos 9443–9454), y experimentos de caos documentados.
 

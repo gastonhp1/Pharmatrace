@@ -19,10 +19,12 @@ no se publican, y el regulador co-firma cada operación.
 | Chaincode | [`fabric/chaincode/pharmatrace`](fabric/chaincode/pharmatrace) | Contrato en Go: lotes, cargamentos, dispensa, recall, precios privados y cadena de frío |
 | Red | [`fabric/network`](fabric/network) | 4 organizaciones con su Fabric CA, 3 orderers Raft, chaincode como servicio. `network.sh` la levanta y la prueba |
 | PKI | [`fabric/docs/PKI.md`](fabric/docs/PKI.md) | Emisión de identidades y runbook: vencimientos, renovar, rotar el TLS de un orderer, revocar con CRL |
+| Kubernetes | [`fabric/helm/pharmatrace-network`](fabric/helm/pharmatrace-network) | Chart de Helm de la red; `k8s.sh` la corre en kind (ver [`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)) |
 | API | [`backend/`](backend) | REST (Express) sobre el Fabric Gateway SDK; también es el gateway IoT |
 | IoT | [`iot/`](iot) | Valija con sensores: formato de lectura, simulador, hardware y modelo de amenazas |
 | Firmware | [Pharmatrace-firmware](https://github.com/gastonhp1/Pharmatrace-firmware) | ESP32 de la valija |
-| Frontend | [PharmaTrace-UI](https://github.com/gastonhp1/PharmaTrace-UI) | React. Todavía habla con la versión EVM |
+| Web | [PharmaTrace-UI](https://github.com/gastonhp1/PharmaTrace-UI) | App React sobre esta API |
+| Mobile | [PharmaTrace-mobile](https://github.com/gastonhp1/PharmaTrace-mobile) | Android (Kotlin): login, escaneo del QR y apertura de la PharmaBox por BLE |
 
 ## Cómo funciona
 
@@ -69,6 +71,9 @@ npm start              # http://localhost:3001
 `./network.sh api` hace todo el recorrido por HTTP (lotes, cargamentos, precios privados, dos valijas simuladas,
 recall) contra la red levantada. Es lo mismo que corre la CI. `./network.sh pki ...` es el runbook de certificados
 (ver [`fabric/docs/PKI.md`](fabric/docs/PKI.md)). `./network.sh down` borra todo.
+
+En Kubernetes, `./k8s.sh all` hace lo mismo en un cluster kind local con el chart de Helm; `./k8s.sh api` y
+`./k8s.sh pki-test` corren las mismas pruebas contra el cluster. Ver [`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md).
 
 ## API
 
@@ -124,7 +129,8 @@ cd fabric/network && ./network.sh all && ./network.sh api   # red real, por CLI 
 En la CI, [`fabric.yml`](.github/workflows/fabric.yml) levanta la red completa en cada PR y corre el smoke test,
 el recorrido por HTTP, una actualización del chaincode y el runbook de certificados (renovar un peer, rotar el TLS
 de un orderer, revocar con CRL). [`ci.yml`](.github/workflows/ci.yml) construye la imagen
-de la API, la escanea con Trivy, la firma y la promueve por GitOps.
+de la API, la escanea con Trivy, la firma y la promueve por GitOps. Un tercer job instala el chart de Helm en kind
+y corre ahí también el smoke test, el recorrido por HTTP y el runbook de certificados.
 
 ## Limitaciones
 
@@ -134,7 +140,8 @@ de la API, la escanea con Trivy, la firma y la promueve por GitOps.
   prueba qué se midió, no que el sensor no fuera manipulado. Detalle en [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
 - **Modelo:** la cadena es fija (laboratorio → droguería → farmacia), sin devoluciones; un lote se sigue entero,
   sin serialización por unidad como pide el sistema de trazabilidad de ANMAT.
-- **Despliegue:** la red corre en Docker Compose. El paso a Kubernetes (kind y después AKS, con GitOps) está en el
-  plan de [`fabric/README.md`](fabric/README.md); hasta entonces la API desplegada en el cluster no tiene una red a
-  la que conectarse.
-- **Frontend:** PharmaTrace-UI todavía usa los ABIs de la versión EVM y tiene que pasar a esta API.
+- **Despliegue:** Docker Compose y kind (Helm). AKS con GitOps es el paso siguiente: falta publicar la imagen del
+  chaincode en un registro, exponer gRPC con TLS passthrough y cargar los Secrets de identidades desde Key Vault
+  ([`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)). Hasta entonces la API desplegada en el cluster no tiene
+  una red a la que conectarse.
+- **Hardware:** la app mobile y el firmware de la PharmaBox todavía no se probaron en dispositivos reales.

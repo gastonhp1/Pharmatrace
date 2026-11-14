@@ -259,10 +259,11 @@ cmd_rotate_orderer_tls() {
   other=$(((n + 1) % 3))
   ORDERER_ADDR="localhost:$((7050 + other * 1000))" ORDERER_HOST="orderer$other.$ORDERER_DOMAIN"
   use_orderer_admin
-  # shellcheck disable=SC2016 # $host and $cert are jq variables
+  # The consenter is orderer1.orderer.pharmatrace.ar on Docker and orderer1 (its Service) on Kubernetes.
+  # shellcheck disable=SC2016 # $host, $short and $cert are jq variables
   update_channel_config \
-    '(.channel_group.groups.Orderer.values.ConsensusType.value.metadata.consenters[] | select(.host == $host)) |= (.client_tls_cert = $cert | .server_tls_cert = $cert)' \
-    --arg host "$host" --arg cert "$cert"
+    '(.channel_group.groups.Orderer.values.ConsensusType.value.metadata.consenters[] | select(.host == $host or .host == $short)) |= (.client_tls_cert = $cert | .server_tls_cert = $cert)' \
+    --arg host "$host" --arg short "orderer$n" --arg cert "$cert"
   ok "consenter $host updated in the channel config"
 
   node_sync_certs "$host"

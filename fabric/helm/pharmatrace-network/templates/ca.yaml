@@ -51,8 +51,8 @@ spec:
           ports:
             - { name: https, containerPort: 7054 }
           readinessProbe:
-            tcpSocket: { port: 7054 }
-            periodSeconds: 3
+            httpGet: { path: /cainfo, port: 7054, scheme: HTTPS }
+            periodSeconds: 5
           volumeMounts:
             - { name: data, mountPath: /etc/hyperledger/fabric-ca-server }
   {{- include "pt.volumeClaim" (dict "root" $ "size" $.Values.storage.ca) | nindent 2 }}
