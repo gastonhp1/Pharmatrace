@@ -61,6 +61,9 @@ spec:
             - { name: CORE_OPERATIONS_LISTENADDRESS, value: 0.0.0.0:9443 }
             - { name: CORE_METRICS_PROVIDER, value: prometheus }
             - { name: CORE_CHAINCODE_EXECUTETIMEOUT, value: 300s }
+            # No Docker: the chaincode runs as a service. With an endpoint set, the peer would also
+            # report the missing Docker daemon in /healthz and never become Ready.
+            - { name: CORE_VM_ENDPOINT, value: "" }
             # The peer reaches its chaincode at cc-{{ $p.ccName }}:9999 (chaincode as a service).
             - { name: CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG, value: '{"peername":"{{ $p.ccName }}"}' }
           ports:
