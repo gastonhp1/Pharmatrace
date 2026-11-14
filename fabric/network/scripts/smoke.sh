@@ -115,9 +115,9 @@ must invoke reg User1 "lab reg" "$(call RecallBatch "$B2" "Desvío de calidad in
 expect "$(query lab User1 "$(call ReadBatch "$B2")" | jq -r .state)" RECALLED "state of $B2"
 
 step "11. Raft: with one orderer down, the channel keeps ordering (2 of 3 is a quorum)"
-docker stop orderer1.orderer.pharmatrace.ar >/dev/null
+node_stop orderer1.orderer.pharmatrace.ar
 must retry 5 invoke lab User1 "lab reg" "$(call RegisterBatch "$B2-raft" 07791234567890 "Insulina" L1 2028-01-31)"
-docker start orderer1.orderer.pharmatrace.ar >/dev/null
+node_start orderer1.orderer.pharmatrace.ar
 ok "transaction committed with orderer1 stopped"
 
 echo

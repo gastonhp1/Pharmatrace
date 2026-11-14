@@ -1,0 +1,9 @@
+apiVersion: v2
+name: pharmatrace-network
+description: PharmaTrace on Hyperledger Fabric - one Fabric CA per org, 3 Raft orderers, a peer per org and chaincode as a service
+type: application
+version: 0.1.0
+appVersion: "3.1.5"
+keywords: [hyperledger, fabric, blockchain, traceability]
+home: https://github.com/gastonhp1/Pharmatrace
+sources: [https://github.com/gastonhp1/Pharmatrace]

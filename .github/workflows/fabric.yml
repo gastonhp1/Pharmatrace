@@ -110,3 +110,65 @@ jobs:
           docker logs --tail 25 peer0dist_pharmatrace 2>&1 | annotate peer0dist_pharmatrace warning || true
       - if: always()
         run: ./network.sh down
+
+  kubernetes:
+    name: Kubernetes (kind + Helm, end to end)
+    needs: chaincode
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: fabric/network
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep a log for the PR annotations
+        working-directory: .
+        run: |
+          echo '[ -n "${JOB_LOG_TEE:-}" ] || { export JOB_LOG_TEE=1; exec > >(tee -a "$RUNNER_TEMP/job.log") 2>&1; }' > "$RUNNER_TEMP/tee.sh"
+          echo "BASH_ENV=$RUNNER_TEMP/tee.sh" >> "$GITHUB_ENV"
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - uses: azure/setup-helm@v4
+      - run: helm lint ../helm/pharmatrace-network && helm template t ../helm/pharmatrace-network --set nodes.enabled=true --set chaincode.enabled=true --set chaincode.packageId=x >/dev/null
+      - run: ./network.sh prereq
+      - run: ./k8s.sh cluster
+      - run: ./k8s.sh up
+      - run: ./k8s.sh channel
+      - run: ./k8s.sh deploy
+      - run: ./k8s.sh smoke
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the API and the simulator
+        working-directory: .
+        run: |
+          npm ci --prefix backend
+          pip install -r iot/simulator/requirements.txt
+      - run: ./k8s.sh api
+      - name: PKI runbook test on Kubernetes
+        env: { BASH_ENV: "" }
+        run: |
+          set -o pipefail
+          annotate() { python3 -c 'import sys; m = sys.stdin.read().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::%s title=PKI test (k8s)::%s" % (sys.argv[1], m))' "$1"; }
+          ./k8s.sh pki-test 2>&1 | tee "$RUNNER_TEMP/pki.log" || {
+            tail -n 60 "$RUNNER_TEMP/pki.log" | annotate error
+            exit 1
+          }
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/pki.log" | grep -E '^(ok:|==>) ' | annotate notice
+      - name: Show the failure on the PR
+        if: failure()
+        env: { BASH_ENV: "" }
+        run: |
+          annotate() { python3 -c 'import sys; t, m = sys.argv[1], sys.stdin.read(); print("::%s title=%s::%s" % (sys.argv[2], t, m.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")))' "$1" "$2"; }
+          tail -n 60 "$RUNNER_TEMP/job.log" 2>/dev/null | annotate "Last lines of the log" error
+          kubectl -n pharmatrace get pods,svc,pvc 2>&1 | annotate "kubectl get" warning
+          for p in $(kubectl -n pharmatrace get pods -o name 2>/dev/null); do
+            { kubectl -n pharmatrace describe "$p" | sed -n '/^Events:/,$p'; kubectl -n pharmatrace logs "$p" --tail 20; } 2>&1 | tail -30 | annotate "$p" warning
+          done
+          tail -n 30 .k8s/forward.log 2>/dev/null | annotate "port-forward log" warning || true

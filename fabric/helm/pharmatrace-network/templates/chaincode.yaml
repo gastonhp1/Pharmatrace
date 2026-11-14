@@ -1,0 +1,66 @@
+{{- if and .Values.nodes.enabled .Values.chaincode.enabled }}
+{{- if not .Values.chaincode.packageId }}
+{{- fail "chaincode.packageId is required: it is the ID the peers installed (peer lifecycle chaincode calculatepackageid)" }}
+{{- end }}
+{{- range $p := .Values.peers }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cc-{{ $p.ccName }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: chaincode
+spec:
+  selector:
+    app.kubernetes.io/name: cc-{{ $p.ccName }}
+  ports:
+    - { name: grpc, port: 9999, targetPort: 9999 }
+---
+# Each org runs its own copy of the chaincode: an endorsement is only worth something if every
+# org executes the code on infrastructure it controls.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cc-{{ $p.ccName }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: chaincode
+    pharmatrace.ar/msp: {{ $p.mspId }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cc-{{ $p.ccName }}
+  template:
+    metadata:
+      labels:
+        {{- include "pt.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: cc-{{ $p.ccName }}
+        app.kubernetes.io/component: chaincode
+        pharmatrace.ar/msp: {{ $p.mspId }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532      # distroless "nonroot"
+        runAsGroup: 65532
+      containers:
+        - name: chaincode
+          image: "{{ $.Values.chaincode.image.repository }}:{{ $.Values.chaincode.image.tag }}"
+          imagePullPolicy: {{ $.Values.chaincode.image.pullPolicy }}
+          env:
+            - { name: CHAINCODE_ID, value: {{ $.Values.chaincode.packageId | quote }} }
+            - { name: CHAINCODE_SERVER_ADDRESS, value: 0.0.0.0:9999 }
+          ports:
+            - { name: grpc, containerPort: 9999 }
+          readinessProbe:
+            tcpSocket: { port: 9999 }
+            periodSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            {{- toYaml $.Values.chaincode.resources | nindent 12 }}
+{{- end }}
+{{- end }}

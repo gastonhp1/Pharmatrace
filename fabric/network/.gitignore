@@ -2,3 +2,4 @@ bin/
 config/
 organizations/
 channel-artifacts/
+.k8s/

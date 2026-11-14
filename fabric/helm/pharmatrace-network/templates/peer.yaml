@@ -1,0 +1,86 @@
+{{- if .Values.nodes.enabled }}
+{{- range $p := .Values.peers }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $p.name }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: peer
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $p.name }}
+  ports:
+    - { name: grpc, port: 7051, targetPort: 7051 }
+    - { name: chaincode, port: 7052, targetPort: 7052 }
+    - { name: operations, port: 9443, targetPort: 9443 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $p.name }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: peer
+    pharmatrace.ar/msp: {{ $p.mspId }}
+spec:
+  serviceName: {{ $p.name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $p.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "pt.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $p.name }}
+        app.kubernetes.io/component: peer
+        pharmatrace.ar/msp: {{ $p.mspId }}
+    spec:
+      containers:
+        - name: peer
+          image: hyperledger/fabric-peer:{{ $.Values.fabric.version }}
+          command: [peer, node, start]
+          env:
+            - { name: FABRIC_LOGGING_SPEC, value: {{ $.Values.fabric.logging }} }
+            - { name: CORE_PEER_ID, value: {{ $p.name }} }
+            - { name: CORE_PEER_LOCALMSPID, value: {{ $p.mspId }} }
+            - { name: CORE_PEER_MSPCONFIGPATH, value: /etc/hyperledger/fabric/msp }
+            - { name: CORE_PEER_ADDRESS, value: "{{ $p.name }}:7051" }
+            - { name: CORE_PEER_LISTENADDRESS, value: 0.0.0.0:7051 }
+            - { name: CORE_PEER_CHAINCODEADDRESS, value: "{{ $p.name }}:7052" }
+            - { name: CORE_PEER_CHAINCODELISTENADDRESS, value: 0.0.0.0:7052 }
+            - { name: CORE_PEER_GOSSIP_BOOTSTRAP, value: "{{ $p.name }}:7051" }
+            - { name: CORE_PEER_GOSSIP_EXTERNALENDPOINT, value: "{{ $p.name }}:7051" }
+            - { name: CORE_PEER_TLS_ENABLED, value: "true" }
+            - { name: CORE_PEER_TLS_CERT_FILE, value: /etc/hyperledger/fabric/tls/server.crt }
+            - { name: CORE_PEER_TLS_KEY_FILE, value: /etc/hyperledger/fabric/tls/server.key }
+            - { name: CORE_PEER_TLS_ROOTCERT_FILE, value: /etc/hyperledger/fabric/tls/ca.crt }
+            - { name: CORE_PEER_PROFILE_ENABLED, value: "false" }
+            - { name: CORE_OPERATIONS_LISTENADDRESS, value: 0.0.0.0:9443 }
+            - { name: CORE_METRICS_PROVIDER, value: prometheus }
+            - { name: CORE_CHAINCODE_EXECUTETIMEOUT, value: 300s }
+            # No Docker: the chaincode runs as a service. With an endpoint set, the peer would also
+            # report the missing Docker daemon in /healthz and never become Ready.
+            - { name: CORE_VM_ENDPOINT, value: "" }
+            # The peer reaches its chaincode at cc-{{ $p.ccName }}:9999 (chaincode as a service).
+            - { name: CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG, value: '{"peername":"{{ $p.ccName }}"}' }
+          ports:
+            - { name: grpc, containerPort: 7051 }
+            - { name: chaincode, containerPort: 7052 }
+            - { name: operations, containerPort: 9443 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 9443 }
+            periodSeconds: 3
+          resources:
+            {{- toYaml $.Values.peer.resources | nindent 12 }}
+          volumeMounts:
+            - { name: msp, mountPath: /etc/hyperledger/fabric/msp, readOnly: true }
+            - { name: tls, mountPath: /etc/hyperledger/fabric/tls, readOnly: true }
+            - { name: data, mountPath: /var/hyperledger/production }
+      volumes:
+        {{- include "pt.identityVolumes" $p.name | nindent 8 }}
+  {{- include "pt.volumeClaim" (dict "root" $ "size" $.Values.storage.peer) | nindent 2 }}
+{{- end }}
+{{- end }}

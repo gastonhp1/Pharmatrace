@@ -31,6 +31,15 @@ org_dir() {
 ca_cert() { echo "$CA_DIR/$1/ca-cert.pem"; }
 ca_container() { echo "ca.$(org_domain "$1")"; }
 
+# Names a node's TLS certificate is valid for: its Docker hostname, its Kubernetes Service (short
+# and full), and localhost for the CLI, the API and the tests. The same certificates work on
+# Docker Compose and on Kubernetes.
+tls_hosts() {
+  local svc
+  svc=$(k8s_name "$1")
+  echo "$1,$svc,$svc.$K8S_NS.svc,$svc.$K8S_NS.svc.cluster.local,localhost,127.0.0.1"
+}
+
 # Runs fabric-ca-client as the CA's bootstrap admin (register, revoke, identity modify...).
 ca_admin() {
   local org=$1
@@ -106,7 +115,7 @@ wait_for_ca() {
   local org=$1
   mkdir -p "$CA_DIR/$org"
   # The CA creates its root certificate on first start, inside its volume: copy it out.
-  retry 20 docker cp "$(ca_container "$org"):/etc/hyperledger/fabric-ca-server/ca-cert.pem" "$(ca_cert "$org")" 2>/dev/null ||
+  retry 20 ca_root_cert "$(ca_container "$org")" "$(ca_cert "$org")" ||
     fatal "ca-$org did not create its certificate"
   retry 20 fabric-ca-client getcainfo -u "https://localhost:${CA_PORT[$org]}" --caname "ca-$org" \
     --tls.certfiles "$(ca_cert "$org")" -H "$WORK/getcainfo" >/dev/null 2>&1 || fatal "ca-$org is not answering"
@@ -136,11 +145,11 @@ bootstrap_org() {
       node="orderer$i.$d"
       secret=$(register "$org" "orderer$i" orderer)
       enroll "$org" "orderer$i" "$secret" "$dir/orderers/$node/msp"
-      enroll_tls "$org" "orderer$i" "$secret" "$dir/orderers/$node/tls" "$node,localhost,127.0.0.1"
+      enroll_tls "$org" "orderer$i" "$secret" "$dir/orderers/$node/tls" "$(tls_hosts "$node")"
     done
   else
     node="peer0.$d"
-    hosts="$node,localhost,127.0.0.1"
+    hosts=$(tls_hosts "$node")
     secret=$(register "$org" peer0 peer)
     enroll "$org" peer0 "$secret" "$dir/peers/$node/msp"
     enroll_tls "$org" peer0 "$secret" "$dir/peers/$node/tls" "$hosts"
@@ -194,8 +203,9 @@ cmd_renew_peer() {
   backup_and_clear "$dir/msp"
   enroll "$org" peer0 "$secret" "$dir/msp"
   backup_and_clear "$dir/tls"
-  enroll_tls "$org" peer0 "$secret" "$dir/tls" "peer0.$d,localhost,127.0.0.1"
-  docker restart "peer0.$d" >/dev/null
+  enroll_tls "$org" peer0 "$secret" "$dir/tls" "$(tls_hosts "peer0.$d")"
+  node_sync_certs "peer0.$d"
+  node_restart "peer0.$d"
   use_org "$org" Admin
   retry 20 peer channel getinfo -c "$CHANNEL" >/dev/null 2>&1 || fatal "peer0.$d did not come back"
   ok "peer0.$d is running with new certificates (serial $(openssl x509 -in "$dir/msp/signcerts/cert.pem" -noout -serial | cut -d= -f2))"
@@ -242,20 +252,22 @@ cmd_rotate_orderer_tls() {
   secret=$(new_secret)
   ca_admin orderer identity modify "orderer$n" --secret "$secret" >/dev/null
   backup_and_clear "$dir"
-  enroll_tls orderer "orderer$n" "$secret" "$dir" "$host,localhost,127.0.0.1"
+  enroll_tls orderer "orderer$n" "$secret" "$dir" "$(tls_hosts "$host")"
   cert=$(base64 -w0 <"$dir/server.crt")
 
   # Talk to another orderer: this one is about to be cut off until it restarts.
   other=$(((n + 1) % 3))
   ORDERER_ADDR="localhost:$((7050 + other * 1000))" ORDERER_HOST="orderer$other.$ORDERER_DOMAIN"
   use_orderer_admin
-  # shellcheck disable=SC2016 # $host and $cert are jq variables
+  # The consenter is orderer1.orderer.pharmatrace.ar on Docker and orderer1 (its Service) on Kubernetes.
+  # shellcheck disable=SC2016 # $host, $short and $cert are jq variables
   update_channel_config \
-    '(.channel_group.groups.Orderer.values.ConsensusType.value.metadata.consenters[] | select(.host == $host)) |= (.client_tls_cert = $cert | .server_tls_cert = $cert)' \
-    --arg host "$host" --arg cert "$cert"
+    '(.channel_group.groups.Orderer.values.ConsensusType.value.metadata.consenters[] | select(.host == $host or .host == $short)) |= (.client_tls_cert = $cert | .server_tls_cert = $cert)' \
+    --arg host "$host" --arg short "orderer$n" --arg cert "$cert"
   ok "consenter $host updated in the channel config"
 
-  docker restart "$host" >/dev/null
+  node_sync_certs "$host"
+  node_restart "$host"
   local port i
   port=$(orderer_admin_port "$n")
   for ((i = 1; i <= 30; i++)); do

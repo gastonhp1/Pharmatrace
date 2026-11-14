@@ -1,0 +1,83 @@
+{{- if .Values.nodes.enabled }}
+{{- range $name := .Values.orderer.names }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: orderer
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+  ports:
+    - { name: grpc, port: 7050, targetPort: 7050 }
+    - { name: admin, port: 7053, targetPort: 7053 }
+    - { name: operations, port: 9443, targetPort: 9443 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: orderer
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "pt.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/component: orderer
+    spec:
+      containers:
+        - name: orderer
+          image: hyperledger/fabric-orderer:{{ $.Values.fabric.version }}
+          command: [orderer]
+          env:
+            - { name: FABRIC_LOGGING_SPEC, value: {{ $.Values.fabric.logging }} }
+            - { name: ORDERER_GENERAL_LISTENADDRESS, value: 0.0.0.0 }
+            - { name: ORDERER_GENERAL_LISTENPORT, value: "7050" }
+            - { name: ORDERER_GENERAL_LOCALMSPID, value: {{ $.Values.orderer.mspId }} }
+            - { name: ORDERER_GENERAL_LOCALMSPDIR, value: /var/hyperledger/orderer/msp }
+            - { name: ORDERER_GENERAL_TLS_ENABLED, value: "true" }
+            - { name: ORDERER_GENERAL_TLS_PRIVATEKEY, value: /var/hyperledger/orderer/tls/server.key }
+            - { name: ORDERER_GENERAL_TLS_CERTIFICATE, value: /var/hyperledger/orderer/tls/server.crt }
+            - { name: ORDERER_GENERAL_TLS_ROOTCAS, value: "[/var/hyperledger/orderer/tls/ca.crt]" }
+            - { name: ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE, value: /var/hyperledger/orderer/tls/server.crt }
+            - { name: ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY, value: /var/hyperledger/orderer/tls/server.key }
+            - { name: ORDERER_GENERAL_CLUSTER_ROOTCAS, value: "[/var/hyperledger/orderer/tls/ca.crt]" }
+            - { name: ORDERER_GENERAL_BOOTSTRAPMETHOD, value: none }
+            - { name: ORDERER_CHANNELPARTICIPATION_ENABLED, value: "true" }
+            - { name: ORDERER_ADMIN_LISTENADDRESS, value: 0.0.0.0:7053 }
+            - { name: ORDERER_ADMIN_TLS_ENABLED, value: "true" }
+            - { name: ORDERER_ADMIN_TLS_CERTIFICATE, value: /var/hyperledger/orderer/tls/server.crt }
+            - { name: ORDERER_ADMIN_TLS_PRIVATEKEY, value: /var/hyperledger/orderer/tls/server.key }
+            - { name: ORDERER_ADMIN_TLS_ROOTCAS, value: "[/var/hyperledger/orderer/tls/ca.crt]" }
+            - { name: ORDERER_ADMIN_TLS_CLIENTROOTCAS, value: "[/var/hyperledger/orderer/tls/ca.crt]" }
+            - { name: ORDERER_OPERATIONS_LISTENADDRESS, value: 0.0.0.0:9443 }
+            - { name: ORDERER_METRICS_PROVIDER, value: prometheus }
+          ports:
+            - { name: grpc, containerPort: 7050 }
+            - { name: admin, containerPort: 7053 }
+            - { name: operations, containerPort: 9443 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 9443 }
+            periodSeconds: 3
+          resources:
+            {{- toYaml $.Values.orderer.resources | nindent 12 }}
+          volumeMounts:
+            - { name: msp, mountPath: /var/hyperledger/orderer/msp, readOnly: true }
+            - { name: tls, mountPath: /var/hyperledger/orderer/tls, readOnly: true }
+            - { name: data, mountPath: /var/hyperledger/production/orderer }
+      volumes:
+        {{- include "pt.identityVolumes" $name | nindent 8 }}
+  {{- include "pt.volumeClaim" (dict "root" $ "size" $.Values.storage.orderer) | nindent 2 }}
+{{- end }}
+{{- end }}
