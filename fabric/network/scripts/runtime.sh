@@ -111,10 +111,15 @@ KIND_CLUSTER="${KIND_CLUSTER:-pharmatrace}"
 CHART_DIR="$NETWORK_DIR/../helm/pharmatrace-network"
 
 # The chaincode containers on Kubernetes: one Deployment per org, all running the package ID the
-# peers installed. On kind the image is loaded into the cluster; nothing is pushed anywhere.
+# peers installed. The image is loaded into the cluster's node, nothing is pushed anywhere: into
+# kind by default, or into minikube when MINIKUBE_PROFILE is set (e.g. MINIKUBE_PROFILE=platform-local).
 k8s_chaincode_up() {
-  local pkg=$1
-  kind load docker-image "pharmatrace-chaincode:$CC_VERSION" --name "$KIND_CLUSTER" >/dev/null
+  local pkg=$1 image="pharmatrace-chaincode:$CC_VERSION"
+  if [[ -n "${MINIKUBE_PROFILE:-}" ]]; then
+    minikube -p "$MINIKUBE_PROFILE" image load --overwrite "$image" >/dev/null
+  else
+    kind load docker-image "$image" --name "$KIND_CLUSTER" >/dev/null
+  fi
   helm upgrade "$K8S_RELEASE" "$CHART_DIR" -n "$K8S_NS" --reuse-values \
     --set chaincode.enabled=true --set-string chaincode.packageId="$pkg" --set-string chaincode.image.tag="$CC_VERSION" \
     --wait --timeout 5m >/dev/null

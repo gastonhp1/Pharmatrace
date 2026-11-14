@@ -18,6 +18,20 @@ kubectl -n pharmatrace get pods
 ./k8s.sh down --cluster # borra todo, cluster incluido
 ```
 
+### En otro cluster (minikube)
+
+`./k8s.sh up`, `channel` y `deploy` funcionan contra cualquier cluster al que apunte `kubectl`; solo `cluster`
+es de kind. Dos variables lo ajustan:
+
+```bash
+export K8S_NS=pharmatrace-fabric          # namespace de la red (default: pharmatrace)
+export MINIKUBE_PROFILE=platform-local    # carga la imagen del chaincode en minikube en vez de kind
+./k8s.sh up && ./k8s.sh channel && ./k8s.sh deploy && ./k8s.sh smoke
+```
+
+Los certificados TLS se emiten con el nombre del Service en ese namespace, así que cambiarlo después obliga a
+reemitirlos (`./k8s.sh down` y de nuevo `up`).
+
 ## Cómo está armado
 
 ```

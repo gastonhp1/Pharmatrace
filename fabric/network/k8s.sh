@@ -5,13 +5,15 @@
 #   ./k8s.sh up            CAs, identities (as Secrets), orderers and peers; then port-forwards
 #   ./k8s.sh forward       (re)start the port-forwards: every node on the same local port as on Docker
 #   ./k8s.sh channel       create the channel and join everyone to it
-#   ./k8s.sh deploy        build the chaincode image, load it into kind and deploy it
+#   ./k8s.sh deploy        build the chaincode image, load it into kind (or minikube) and deploy it
 #   ./k8s.sh smoke|api|pki-test   the same tests as on Docker, against the cluster
 #   ./k8s.sh pki ...       the certificate runbook (scripts/pki.sh), against the cluster
 #   ./k8s.sh all           cluster + up + channel + deploy + smoke
 #   ./k8s.sh down [--cluster]   remove the release, the namespace and organizations/ (and the cluster)
 #
 # Needs kind, kubectl, helm and Docker, plus what network.sh needs (./network.sh prereq).
+# On another cluster, skip `cluster` and point kubectl at it. K8S_NS picks the namespace (default
+# pharmatrace) and MINIKUBE_PROFILE=<profile> loads the chaincode image into minikube instead of kind.
 set -euo pipefail
 cd "$(dirname "$0")"
 export RUNTIME=k8s
