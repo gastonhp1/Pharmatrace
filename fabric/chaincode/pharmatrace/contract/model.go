@@ -16,8 +16,8 @@ const (
 // recall a batch. It also co-endorses every write (see the endorsement policies in fabric/network).
 const RegulatorMSP = "RegMSP"
 
-// Batch states. A batch only moves forward, except RECALLED, which can happen at any point
-// before it is dispensed and is final.
+// Batch states. A batch only moves forward, with two exceptions: RECALLED, which can happen at
+// any point before it is dispensed and is final, and QUARANTINED, which only the regulator lifts.
 const (
 	StateRegistered     = "REGISTERED"      // the manufacturer created it
 	StateInTransit      = "IN_TRANSIT"      // dispatched, waiting for the recipient to receive it
@@ -25,6 +25,7 @@ const (
 	StateInPharmacy     = "IN_PHARMACY"     // held by a pharmacy
 	StateDispensed      = "DISPENSED"       // handed to a patient
 	StateRecalled       = "RECALLED"        // pulled from the market by the regulator
+	StateQuarantined    = "QUARANTINED"     // arrived in a cargo whose cold chain was broken: it cannot move or be dispensed
 )
 
 // Cargo states.
@@ -62,21 +63,26 @@ type Org struct {
 // The custody history is not stored here: Fabric keeps every version of the key, and
 // GetBatchHistory reads it with GetHistoryForKey.
 type Batch struct {
-	ID            string `json:"id"`
-	GTIN          string `json:"gtin"`    // product code (GS1 GTIN, as in the ANMAT traceability system)
-	Product       string `json:"product"` // commercial name
-	Lot           string `json:"lot"`
-	ExpiryDate    string `json:"expiryDate"` // YYYY-MM-DD
-	Manufacturer  string `json:"manufacturer"`
-	Owner         string `json:"owner"`     // MSP ID of the org that holds it
-	PendingTo     string `json:"pendingTo"` // MSP ID of the recipient while IN_TRANSIT, "" otherwise
-	State         string `json:"state"`
-	Cargo         string `json:"cargo"`      // cargo it travels in, "" when it moves on its own
-	PatientRef    string `json:"patientRef"` // sha256 of a patient reference, set when dispensed
-	RecallReason  string `json:"recallReason"`
-	StateBefore   string `json:"stateBefore"` // state before the recall
-	LastUpdatedAt string `json:"lastUpdatedAt"`
-	LastTxID      string `json:"lastTxId"`
+	ID           string `json:"id"`
+	GTIN         string `json:"gtin"`    // product code (GS1 GTIN, as in the ANMAT traceability system)
+	Product      string `json:"product"` // commercial name
+	Lot          string `json:"lot"`
+	ExpiryDate   string `json:"expiryDate"` // YYYY-MM-DD
+	Manufacturer string `json:"manufacturer"`
+	Owner        string `json:"owner"`     // MSP ID of the org that holds it
+	PendingTo    string `json:"pendingTo"` // MSP ID of the recipient while IN_TRANSIT, "" otherwise
+	State        string `json:"state"`
+	Cargo        string `json:"cargo"`      // cargo it travels in, "" when it moves on its own
+	PatientRef   string `json:"patientRef"` // sha256 of a patient reference, set when dispensed
+	RecallReason string `json:"recallReason"`
+	StateBefore  string `json:"stateBefore"` // state before the recall or the quarantine
+	// Cold-chain quarantine. The reason and the cargo stay after a release, as part of what
+	// happened to the batch; ReleaseReason is only set once the regulator released it.
+	QuarantineReason string `json:"quarantineReason"`
+	QuarantineCargo  string `json:"quarantineCargo"`
+	ReleaseReason    string `json:"releaseReason"`
+	LastUpdatedAt    string `json:"lastUpdatedAt"`
+	LastTxID         string `json:"lastTxId"`
 }
 
 // HistoryEntry is one version of a batch, as returned by GetHistoryForKey.
@@ -217,13 +223,21 @@ type cargoEvent struct {
 	State    string   `json:"state"`
 	To       string   `json:"to,omitempty"`
 	BatchIDs []string `json:"batchIds"`
+	// Batches that came out of the cargo QUARANTINED, and why.
+	Quarantined []string `json:"quarantined,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 }
 
+// A ColdChainCompromised event also says whose cargo it is and what it carries, so whoever
+// listens knows who to warn without reading the ledger again.
 type coldChainEvent struct {
-	CargoID          string `json:"cargoId"`
-	Verdict          string `json:"verdict"`
-	ExcursionSeconds int    `json:"excursionSeconds"`
-	Reason           string `json:"reason,omitempty"`
+	CargoID          string   `json:"cargoId"`
+	Verdict          string   `json:"verdict"`
+	ExcursionSeconds int      `json:"excursionSeconds"`
+	Reason           string   `json:"reason,omitempty"`
+	Owner            string   `json:"owner,omitempty"`
+	To               string   `json:"to,omitempty"`
+	BatchIDs         []string `json:"batchIds,omitempty"`
 }
 
 // Event names.
@@ -233,9 +247,11 @@ const (
 	EventBatchReceived       = "BatchReceived"
 	EventBatchDispensed      = "BatchDispensed"
 	EventBatchRecalled       = "BatchRecalled"
+	EventBatchReleased       = "BatchReleased"
 	EventCargoCreated        = "CargoCreated"
 	EventCargoDispatched     = "CargoDispatched"
 	EventCargoReceived       = "CargoReceived"
+	EventCargoDissolved      = "CargoDissolved"
 	EventReadingsAnchored    = "ReadingsAnchored"
 	EventColdChainCompromise = "ColdChainCompromised"
 	EventMonitoringClosed    = "MonitoringClosed"

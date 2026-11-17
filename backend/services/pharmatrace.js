@@ -68,6 +68,14 @@ function createPharmaService({ ledger, manufacturer = "LabMSP", auditor = REGULA
             return write(REGULATOR, "RecallBatch", [batchId, reason], [holder, REGULATOR]);
         },
 
+        // A batch that arrived with its cold chain broken is QUARANTINED until the regulator
+        // releases it (or recalls it). Same endorsers as a recall.
+        async releaseBatch(batchId, reason) {
+            const batch = await getBatch(batchId);
+            const holder = batch.pendingTo || batch.owner;
+            return write(REGULATOR, "ReleaseBatch", [batchId, reason], [holder, REGULATOR]);
+        },
+
         // ------------------------------------------------------------ cargoes
         getCargo,
 

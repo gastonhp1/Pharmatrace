@@ -45,6 +45,11 @@ no se publican, y el regulador co-firma cada operación.
 - **Cadena de frío.** La valija firma cada lectura (ECDSA P-256 en un secure element). El gateway verifica las
   firmas contra la clave registrada en el ledger y ancla una raíz de Merkle por ventana; el chaincode da el
   veredicto (`COMPLIANT` o `COMPROMISED`). Detalle en [`iot/`](iot/README.md).
+- **Cuarentena.** Los lotes de un cargamento que llegó con la cadena de frío rota quedan bloqueados
+  (`QUARANTINED`): no se despachan ni se dispensan hasta que el regulador los libera o les hace recall.
+- **Notificaciones.** El chaincode emite un evento por cada cambio; la API los escucha y avisa a las orgs
+  afectadas (un recall, un cargamento que perdió el frío, lotes en cuarentena, un envío en camino) por un feed y
+  por webhooks.
 - **Identidades.** Cada organización emite sus certificados con su propia Fabric CA. El gateway IoT se reconoce
   por un atributo de su certificado (`pharmatrace.role=iot-gateway`) que solo puede poner la CA de su org
   (control de acceso por atributo).
@@ -93,16 +98,18 @@ consorcio real cada org corre su propia API con solo su identidad.
 | POST | `/api/batches/:id/receive` | |
 | POST | `/api/batches/:id/dispense` | `patientRef` (se guarda solo su SHA-256) |
 | POST | `/api/batches/:id/recall` | `reason` |
+| POST | `/api/batches/:id/release` | `reason`. El regulador levanta una cuarentena |
 | PUT | `/api/batches/:id/terms` | `buyer`, `unitPrice` (texto, `"1234.50"`), `currency`, `quantity` |
 | GET | `/api/batches/:id/terms` | `?leg=manufacturer\|distributor&as=<MSP>` (pide `x-api-key`) |
 | POST | `/api/batches/:id/terms/verify` | `leg`, `seller`, `buyer`, `unitPrice`, `currency`, `quantity` → `{ matches }` |
 | POST | `/api/cargo` | `cargoId`, `batchIds[]` |
 | GET | `/api/cargo/:id` | |
 | POST | `/api/cargo/:id/dispatch` | `to` |
-| POST | `/api/cargo/:id/receive` | |
+| POST | `/api/cargo/:id/receive` | Si el cargamento está monitoreado, primero hay que cerrar el monitoreo |
 | POST | `/api/cargo/:id/dissolve` | Deshace un cargamento que no salió |
 | POST | `/api/orgs` | `mspId`, `role` (`manufacturer`, `distributor`, `pharmacy`) |
 | GET | `/api/orgs/:msp` · `/api/orgs/:msp/batches` | |
+| GET | `/api/notifications` | `?org=<MSP>&severity=info\|warning\|critical&limit=50`, las más nuevas primero |
 | | `/api/iot/...` | Valijas, políticas, lecturas, anclaje y pruebas: ver [`iot/`](iot/README.md) |
 | | `/api/auth/...` · `/api/box/...` | Login de usuarios (sesión Bearer) y tokens de apertura de la PharmaBox para la app móvil: ver [`iot/docs/BOX_UNLOCK.md`](iot/docs/BOX_UNLOCK.md) |
 
@@ -114,8 +121,30 @@ Errores, siempre `{"error": "<motivo>"}`. El chaincode marca sus errores con un 
 | 401 | | Falta `x-api-key` o es incorrecta |
 | 403 | `FORBIDDEN` | No es el dueño, no es el regulador, no es miembro de la colección privada |
 | 404 | `NOT_FOUND` | El lote, el cargamento o la org no existen |
-| 409 | `CONFLICT` | Ya existe, el lote viaja en un cargamento, el destinatario no tiene el rol siguiente, otra transacción tocó lo mismo (MVCC) |
+| 409 | `CONFLICT` | Ya existe, el lote viaja en un cargamento o está en cuarentena, el destinatario no tiene el rol siguiente, el cargamento todavía se está monitoreando, otra transacción tocó lo mismo (MVCC) |
 | 503 | | La red no responde, o faltan las identidades de Fabric, o falta `API_KEY` |
+
+## Notificaciones
+
+La API escucha los eventos del chaincode en el canal (con la identidad del regulador) y se queda con los que
+alguien tiene que atender:
+
+| Evento | Severidad | Para quién |
+| --- | --- | --- |
+| `ColdChainCompromised` | critical | El dueño del cargamento, su destinatario y el regulador |
+| `CargoReceived` / `CargoDissolved` con lotes en cuarentena | critical | Quien los tiene y el regulador |
+| `BatchRecalled` | critical | Quien tiene el lote y el regulador |
+| `BatchReleased` | info | Quien tiene el lote y el regulador |
+| `CargoDispatched` / `BatchDispatched` | info | El destinatario |
+
+```bash
+curl "localhost:3001/api/notifications?org=DistMSP&severity=critical"
+```
+
+Con `WEBHOOK_URLS` cada notificación sale además como un POST con JSON; con `WEBHOOK_SECRET` el body va firmado
+en `x-pharmatrace-signature: sha256=<HMAC-SHA256>`. El listener guarda un checkpoint del último evento que
+procesó: después de un reinicio o de un corte sigue desde ahí, y un evento repetido no se notifica dos veces. La
+entrega por webhook es de mejor esfuerzo (tres intentos): el registro es el feed.
 
 ## Tests
 
@@ -136,6 +165,9 @@ y corre ahí también el smoke test, el recorrido por HTTP y el runbook de certi
 
 - **Identidades:** cada org tiene su Fabric CA, pero la API tiene las identidades de todas. Lo correcto es una
   API por org; y las CAs son raíces online sin HSM. Ver [`fabric/docs/PKI.md`](fabric/docs/PKI.md).
+- **Notificaciones:** el feed es un archivo que lee un solo proceso de la API, y separa las orgs solo por un
+  parámetro: cualquiera puede leer las notificaciones de cualquier org (repiten lo que es público en el canal).
+  Todavía no hay push al celular.
 - **IoT:** el gateway guarda las lecturas en archivos (un solo proceso); no detecta huecos de datos; la evidencia
   prueba qué se midió, no que el sensor no fuera manipulado. Detalle en [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
 - **Modelo:** la cadena es fija (laboratorio → droguería → farmacia), sin devoluciones; un lote se sigue entero,

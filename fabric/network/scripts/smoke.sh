@@ -97,8 +97,10 @@ expect "$(query reg User1 "$(call VerifyReading "$CARGO" 0 7d1f0b7c4a3e2d1c0b9a8
 
 step "8. The cargo goes Dist -> Farma; Farma opens the valija, closes the monitoring and dispenses"
 must invoke dist User1 "dist reg" "$(call DispatchCargo "$CARGO" FarmaMSP)"
-must invoke farma User1 "farma reg" "$(call ReceiveCargo "$CARGO")"
+# A monitored cargo is received with its verdict final.
+must_fail "close its monitoring first" invoke farma User1 "farma reg" "$(call ReceiveCargo "$CARGO")"
 must invoke farma User1 "farma reg" "$(call CloseMonitoring "$CARGO")"
+must invoke farma User1 "farma reg" "$(call ReceiveCargo "$CARGO")"
 expect "$(query reg User1 "$(call GetMonitoring "$CARGO")" | jq -r .verdict)" COMPLIANT "cold-chain verdict"
 expect "$(query reg User1 "$(call GetDevice "$DEVICE")" | jq -r .activeCargo)" "" "valija free again"
 PATIENT=$(printf 'receta-%s' "$RUN" | sha256sum | cut -d' ' -f1)

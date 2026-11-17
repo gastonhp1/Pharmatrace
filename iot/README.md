@@ -43,6 +43,10 @@ python3 iot/simulator/simulator.py run --key valija.pem --device-id VAL-001 --sc
 curl -X POST $API/api/iot/cargo/C-1/anchor "${h[@]}"
 curl $API/api/iot/cargo/C-1
 curl -X POST $API/api/iot/monitoring/close "${h[@]}" -d '{"cargoId":"C-1"}'
+
+# 6. Recién ahora se puede recibir el cargamento. Si el veredicto fue COMPROMISED, sus lotes llegan en cuarentena
+curl -X POST $API/api/cargo/C-1/receive "${h[@]}"
+curl $API/api/notifications?severity=critical
 ```
 
 Qué esperar con esa política:

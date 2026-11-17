@@ -6,9 +6,10 @@ const { cargoRoutes } = require("./routes/cargo");
 const { iotRoutes } = require("./routes/iot");
 const { authRoutes } = require("./routes/auth");
 const { boxRoutes } = require("./routes/box");
+const { notificationRoutes } = require("./routes/notifications");
 
 // The HTTP API. Services are passed in so the tests can run it against a fake ledger.
-function createApp({ pharma, iot, users, box, env = process.env }) {
+function createApp({ pharma, iot, users, box, notifications, env = process.env }) {
     const app = express();
     app.use(cors());
     app.use(express.json());
@@ -30,6 +31,7 @@ function createApp({ pharma, iot, users, box, env = process.env }) {
     app.use("/api/iot", iotRoutes(iot, env));
     if (users) app.use("/api/auth", authRoutes(users, env));
     if (box) app.use("/api/box", boxRoutes(box, env));
+    if (notifications) app.use("/api/notifications", notificationRoutes(notifications));
 
     app.get("/", (req, res) => res.send("PharmaTrace API on Hyperledger Fabric 🚀"));
     app.get("/healthz", (req, res) => res.json({ ok: true }));

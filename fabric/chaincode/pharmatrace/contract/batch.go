@@ -173,7 +173,7 @@ func (c *PharmaTrace) ReceiveBatch(ctx contractapi.TransactionContextInterface, 
 	if batch.Cargo != "" {
 		return nil, conflict("batch %s travels in cargo %s: receive the cargo", batchID, batch.Cargo)
 	}
-	if err := c.receive(ctx, batch, msp); err != nil {
+	if err := c.receive(ctx, batch, msp, ""); err != nil {
 		return nil, err
 	}
 	return batch, emit(ctx, EventBatchReceived, batchEvent{BatchID: batchID, Owner: msp, State: batch.State})
@@ -233,7 +233,35 @@ func (c *PharmaTrace) RecallBatch(ctx contractapi.TransactionContextInterface, b
 	if err := c.saveBatch(ctx, batch, holderOf(batch)); err != nil {
 		return nil, err
 	}
-	return batch, emit(ctx, EventBatchRecalled, batchEvent{BatchID: batchID, Owner: batch.Owner, State: batch.State, Reason: reason})
+	return batch, emit(ctx, EventBatchRecalled, batchEvent{BatchID: batchID, Owner: batch.Owner, State: batch.State, To: batch.PendingTo, Reason: reason})
+}
+
+// ReleaseBatch lifts a cold-chain quarantine: the regulator reviewed the evidence (how long and
+// how far the cargo was out of range, the product's stability data) and decided the batch is
+// still fit for use. The batch goes back to the state it had and can move again. The other way
+// out of a quarantine is RecallBatch.
+func (c *PharmaTrace) ReleaseBatch(ctx contractapi.TransactionContextInterface, batchID string, reason string) (*Batch, error) {
+	if err := requireRegulator(ctx); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, invalid("a release needs a reason")
+	}
+	batch, err := c.ReadBatch(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+	if batch.State != StateQuarantined {
+		return nil, conflict("batch %s is %s, not QUARANTINED", batchID, batch.State)
+	}
+
+	batch.State = batch.StateBefore
+	batch.StateBefore = ""
+	batch.ReleaseReason = reason
+	if err := c.saveBatch(ctx, batch, holderOf(batch)); err != nil {
+		return nil, err
+	}
+	return batch, emit(ctx, EventBatchReleased, batchEvent{BatchID: batchID, Owner: batch.Owner, State: batch.State, Reason: reason})
 }
 
 // ReadBatch returns a batch. Any member of the channel can read it.
@@ -340,6 +368,9 @@ func (c *PharmaTrace) ownedBatch(ctx contractapi.TransactionContextInterface, ba
 	if batch.State == StateRecalled || batch.State == StateDispensed {
 		return nil, conflict("batch %s is %s and cannot change anymore", batchID, batch.State)
 	}
+	if batch.State == StateQuarantined {
+		return nil, conflict("batch %s is QUARANTINED (%s): only the regulator can release or recall it", batchID, batch.QuarantineReason)
+	}
 	return batch, nil
 }
 
@@ -369,9 +400,21 @@ func (c *PharmaTrace) checkDispatch(ctx contractapi.TransactionContextInterface,
 	return nil
 }
 
+// quarantine blocks a batch that came out of cargoID with a broken cold chain.
+func quarantine(batch *Batch, cargoID, reason string) {
+	batch.StateBefore = batch.State
+	batch.State = StateQuarantined
+	batch.QuarantineReason = reason
+	batch.QuarantineCargo = cargoID
+	batch.ReleaseReason = ""
+}
+
 // receive hands a batch in transit to its recipient. A recalled batch changes hands but keeps
-// its state.
-func (c *PharmaTrace) receive(ctx contractapi.TransactionContextInterface, batch *Batch, msp string) error {
+// its state. With a quarantineReason (the cargo it came in had its cold chain broken) the batch
+// arrives QUARANTINED.
+func (c *PharmaTrace) receive(ctx contractapi.TransactionContextInterface, batch *Batch, msp string, quarantineReason string) error {
+	cargoID := batch.Cargo
+	batch.Cargo = ""
 	if batch.State != StateRecalled {
 		role, err := orgRole(ctx, msp)
 		if err != nil {
@@ -382,6 +425,9 @@ func (c *PharmaTrace) receive(ctx contractapi.TransactionContextInterface, batch
 			return conflict("a %q cannot hold batches", role)
 		}
 		batch.State = state
+		if quarantineReason != "" {
+			quarantine(batch, cargoID, quarantineReason)
+		}
 	}
 	if err := c.moveOwnerIndex(ctx, batch.ID, batch.Owner, msp); err != nil {
 		return err

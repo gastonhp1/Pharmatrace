@@ -10,6 +10,10 @@ const { createBoxService } = require("./services/boxService");
 const { loadPrivateKey } = require("./box/token");
 const { UnlockAudit } = require("./box/audit");
 const fs = require("fs");
+const { checkpointers } = require("@hyperledger/fabric-gateway");
+const { NotificationStore } = require("./notifications/store");
+const { createWebhooks } = require("./notifications/webhook");
+const { createEventListener } = require("./notifications/listener");
 
 const env = process.env;
 const PORT = env.PORT || 3001;
@@ -44,8 +48,33 @@ if (!env.API_KEY && env.AUTH_DISABLED !== "true") {
     console.warn("⚠️  API_KEY is not set: write endpoints will answer 503 (set AUTH_DISABLED=true for local development).");
 }
 
-const server = createApp({ pharma, iot, users, box, env }).listen(PORT, () => {
+// Notifications: the API listens to the chaincode events (as the regulator, who sees the whole
+// channel), keeps the ones that matter in a feed and rings the configured webhooks.
+const notificationsDir = env.NOTIFICATIONS_DIR || path.join(__dirname, "data/notifications");
+const notifications = new NotificationStore(path.join(notificationsDir, "notifications.jsonl"));
+let listener = null;
+async function startNotifications() {
+    fs.mkdirSync(notificationsDir, { recursive: true });
+    const webhooks = createWebhooks({
+        urls: (env.WEBHOOK_URLS || "").split(",").map((u) => u.trim()).filter(Boolean),
+        secret: env.WEBHOOK_SECRET || "",
+    });
+    listener = createEventListener({
+        source: (opts) => ledger.events(parseActor(env.NOTIFICATIONS_IDENTITY || "reg"), opts),
+        checkpointer: await checkpointers.file(path.join(notificationsDir, "checkpoint.json")),
+        store: notifications,
+        webhooks,
+    });
+    listener.start();
+    if (webhooks.enabled) console.log("🪝 Webhooks enabled");
+}
+
+const server = createApp({ pharma, iot, users, box, notifications, env }).listen(PORT, () => {
     console.log(`✅ PharmaTrace API running on http://localhost:${PORT}`);
+
+    if (env.NOTIFICATIONS !== "off") {
+        startNotifications().catch((err) => console.error("❌ Notifications could not start:", err.message));
+    }
 
     // Optional: anchor the IoT readings of every monitored cargo on a timer.
     const anchorEvery = Number(env.IOT_ANCHOR_INTERVAL_SECONDS);
@@ -56,7 +85,8 @@ const server = createApp({ pharma, iot, users, box, env }).listen(PORT, () => {
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, () => {
+    process.on(signal, async () => {
+        if (listener) await listener.stop();
         closeAll();
         server.close(() => process.exit(0));
     });
