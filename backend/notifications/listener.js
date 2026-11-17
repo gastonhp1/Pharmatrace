@@ -54,8 +54,11 @@ function createEventListener({ source, checkpointer, store, webhooks, log = cons
             }
             if (stopped) break;
             await new Promise((resolve) => {
-                wake = resolve;
-                setTimeout(resolve, wait).unref();
+                const timer = setTimeout(resolve, wait);
+                wake = () => {
+                    clearTimeout(timer);
+                    resolve();
+                };
             });
             wait = Math.min(wait * 2, maxRetryMs);
         }
