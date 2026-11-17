@@ -101,7 +101,11 @@ func (c *PharmaTrace) DispatchCargo(ctx contractapi.TransactionContextInterface,
 }
 
 // ReceiveCargo is called by the recipient: it takes custody of every batch (recalled ones
-// included, to quarantine them), the batches are free again and the cargo is closed.
+// included), the batches leave the cargo and the cargo is closed.
+//
+// A monitored cargo is received with its verdict final: its monitoring has to be closed first.
+// If the cold chain was broken, the batches arrive QUARANTINED: they cannot be dispatched or
+// dispensed until the regulator releases them (ReleaseBatch) or recalls them.
 func (c *PharmaTrace) ReceiveCargo(ctx contractapi.TransactionContextInterface, cargoID string) (*Cargo, error) {
 	msp, err := clientMSP(ctx)
 	if err != nil {
@@ -114,14 +118,21 @@ func (c *PharmaTrace) ReceiveCargo(ctx contractapi.TransactionContextInterface, 
 	if cargo.State != CargoInTransit || cargo.PendingTo != msp {
 		return nil, conflict("cargo %s is not in transit to %s", cargoID, msp)
 	}
+	reason, err := c.brokenColdChain(ctx, cargoID)
+	if err != nil {
+		return nil, err
+	}
+	quarantined := []string{}
 	for _, id := range cargo.BatchIDs {
 		batch, err := c.ReadBatch(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		batch.Cargo = ""
-		if err := c.receive(ctx, batch, msp); err != nil {
+		if err := c.receive(ctx, batch, msp, reason); err != nil {
 			return nil, err
+		}
+		if batch.State == StateQuarantined {
+			quarantined = append(quarantined, id)
 		}
 	}
 	cargo.Owner = msp
@@ -130,24 +141,45 @@ func (c *PharmaTrace) ReceiveCargo(ctx contractapi.TransactionContextInterface, 
 	if err := c.saveCargo(ctx, cargo); err != nil {
 		return nil, err
 	}
-	return cargo, emit(ctx, EventCargoReceived, cargoEvent{CargoID: cargoID, Owner: msp, State: cargo.State, BatchIDs: cargo.BatchIDs})
+	event := cargoEvent{CargoID: cargoID, Owner: msp, State: cargo.State, BatchIDs: cargo.BatchIDs}
+	if len(quarantined) > 0 {
+		event.Quarantined, event.Reason = quarantined, reason
+	}
+	return cargo, emit(ctx, EventCargoReceived, event)
 }
 
 // DissolveCargo undoes a cargo that was not dispatched yet and frees its batches, for example to
-// leave out a batch that was recalled.
+// leave out a batch that was recalled. The cold-chain rules of ReceiveCargo apply here too:
+// dissolving a cargo is not a way around a broken cold chain.
 func (c *PharmaTrace) DissolveCargo(ctx contractapi.TransactionContextInterface, cargoID string) (*Cargo, error) {
 	cargo, batches, err := c.ownedOpenCargo(ctx, cargoID)
 	if err != nil {
 		return nil, err
 	}
+	reason, err := c.brokenColdChain(ctx, cargoID)
+	if err != nil {
+		return nil, err
+	}
+	quarantined := []string{}
 	for _, batch := range batches {
 		batch.Cargo = ""
+		if reason != "" && batch.State != StateRecalled {
+			quarantine(batch, cargoID, reason)
+			quarantined = append(quarantined, batch.ID)
+		}
 		if err := c.saveBatch(ctx, batch, batch.Owner); err != nil {
 			return nil, err
 		}
 	}
 	cargo.State = CargoDissolved
-	return cargo, c.saveCargo(ctx, cargo)
+	if err := c.saveCargo(ctx, cargo); err != nil {
+		return nil, err
+	}
+	event := cargoEvent{CargoID: cargoID, Owner: cargo.Owner, State: cargo.State, BatchIDs: cargo.BatchIDs}
+	if len(quarantined) > 0 {
+		event.Quarantined, event.Reason = quarantined, reason
+	}
+	return cargo, emit(ctx, EventCargoDissolved, event)
 }
 
 // ReadCargo returns a cargo.
@@ -190,6 +222,27 @@ func (c *PharmaTrace) ownedOpenCargo(ctx contractapi.TransactionContextInterface
 		batches = append(batches, batch)
 	}
 	return cargo, batches, nil
+}
+
+// brokenColdChain says why the batches of a cargo have to be quarantined when they leave it, or
+// "" if they do not. A cargo nobody monitored has no verdict and quarantines nothing. A monitored
+// one needs its verdict to be final: while the monitoring is open a window can still arrive.
+func (c *PharmaTrace) brokenColdChain(ctx contractapi.TransactionContextInterface, cargoID string) (string, error) {
+	var m Monitoring
+	found, err := getJSON(ctx, objMonitoring, []string{cargoID}, &m)
+	if err != nil || !found {
+		return "", err
+	}
+	if !m.Closed {
+		return "", conflict("cargo %s is still being monitored: close its monitoring first, so its verdict is final", cargoID)
+	}
+	if m.Verdict != VerdictCompromised {
+		return "", nil
+	}
+	if m.Reason == "" {
+		return "cold chain compromised", nil
+	}
+	return m.Reason, nil
 }
 
 func (c *PharmaTrace) saveCargo(ctx contractapi.TransactionContextInterface, cargo *Cargo) error {

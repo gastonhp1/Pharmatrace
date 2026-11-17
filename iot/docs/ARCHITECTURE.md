@@ -49,8 +49,14 @@ la clave de `GetDevice`.
 - **El tenedor del cargamento** (el dueño, o el destinatario mientras viaja) **o un gateway** lo cierra
   (`CloseMonitoring`), y la valija queda libre.
 
-Los lotes del cargamento comparten el veredicto. Un veredicto `COMPROMISED` no bloquea los lotes: es evidencia para
-que el regulador decida un recall (`RecallBatch`).
+Los lotes del cargamento comparten el veredicto, y el veredicto tiene consecuencias:
+
+- Un cargamento monitoreado se recibe (`ReceiveCargo`) o se disuelve (`DissolveCargo`) con el veredicto firme: primero
+  hay que cerrar el monitoreo. Así nadie recibe sin saber cómo viajó, y no puede llegar una ventana después.
+- Si el veredicto es `COMPROMISED`, los lotes salen del cargamento en estado `QUARANTINED`: no se despachan ni se
+  dispensan. El regulador revisa la evidencia (cuánto tiempo y cuánto se salió de rango) y decide: los libera
+  (`ReleaseBatch`) o les hace recall (`RecallBatch`).
+- Un cargamento sin monitoreo no tiene veredicto y no bloquea nada.
 
 ## Reglas de veredicto
 

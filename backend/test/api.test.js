@@ -88,6 +88,17 @@ describe("batches: who acts and who endorses", () => {
         });
     });
 
+    test("release acts as the regulator and the holder co-endorses", async () => {
+        const ledger = fakeLedger({ ReadBatch: { id: "B1", owner: "DistMSP", pendingTo: "", state: "QUARANTINED" } });
+        await withApp(ledger, async (call) => {
+            assert.equal((await call("POST", "/api/batches/B1/release", {})).status, 400);
+            assert.equal((await call("POST", "/api/batches/B1/release", { reason: "excursión breve" }, { key: null })).status, 401);
+            assert.equal((await call("POST", "/api/batches/B1/release", { reason: "excursión breve" })).status, 200);
+            const [release] = ledger.submits();
+            assert.deepEqual([release.actor, release.fn, release.args, release.endorsingOrgs], ["RegMSP", "ReleaseBatch", ["B1", "excursión breve"], ["DistMSP", "RegMSP"]]);
+        });
+    });
+
     test("dispense sends only a hash of the patient reference", async () => {
         const ledger = fakeLedger({ ReadBatch: { id: "B1", owner: "FarmaMSP", pendingTo: "" } });
         await withApp(ledger, async (call) => {

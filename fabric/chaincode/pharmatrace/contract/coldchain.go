@@ -302,7 +302,10 @@ func (c *PharmaTrace) AnchorWindow(ctx contractapi.TransactionContextInterface, 
 	if m.Verdict != VerdictCompromised && m.ExcursionSeconds > policy.MaxExcursionSeconds {
 		m.Verdict = VerdictCompromised
 		m.Reason = fmt.Sprintf("%d seconds out of range, the policy allows %d", m.ExcursionSeconds, policy.MaxExcursionSeconds)
-		event, payload = EventColdChainCompromise, coldChainEvent{CargoID: cargoID, Verdict: m.Verdict, ExcursionSeconds: m.ExcursionSeconds, Reason: m.Reason}
+		if payload, err = c.compromisedEvent(ctx, m); err != nil {
+			return nil, err
+		}
+		event = EventColdChainCompromise
 	}
 	if err := putJSON(ctx, objMonitoring, []string{cargoID}, m); err != nil {
 		return nil, err
@@ -347,9 +350,24 @@ func (c *PharmaTrace) ReportDeviceEvent(ctx contractapi.TransactionContextInterf
 		return nil, err
 	}
 	if compromised {
-		return m, emit(ctx, EventColdChainCompromise, coldChainEvent{CargoID: cargoID, Verdict: m.Verdict, ExcursionSeconds: m.ExcursionSeconds, Reason: m.Reason})
+		payload, err := c.compromisedEvent(ctx, m)
+		if err != nil {
+			return nil, err
+		}
+		return m, emit(ctx, EventColdChainCompromise, payload)
 	}
 	return m, nil
+}
+
+func (c *PharmaTrace) compromisedEvent(ctx contractapi.TransactionContextInterface, m *Monitoring) (coldChainEvent, error) {
+	cargo, err := c.ReadCargo(ctx, m.CargoID)
+	if err != nil {
+		return coldChainEvent{}, err
+	}
+	return coldChainEvent{
+		CargoID: m.CargoID, Verdict: m.Verdict, ExcursionSeconds: m.ExcursionSeconds, Reason: m.Reason,
+		Owner: cargo.Owner, To: cargo.PendingTo, BatchIDs: cargo.BatchIDs,
+	}, nil
 }
 
 // CloseMonitoring ends the session and frees the valija. Without problems the verdict becomes

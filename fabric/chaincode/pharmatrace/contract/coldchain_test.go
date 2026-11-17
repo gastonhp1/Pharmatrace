@@ -3,6 +3,7 @@ package contract
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -281,5 +282,135 @@ func TestGatewayAuthorization(t *testing.T) {
 	h.must(reg, "admin", func(ctx ctxT) error { return h.cc.RevokeGatewayOrg(ctx, dist) })
 	if err := anchorAs(dist, "iot-gateway"); err == nil {
 		t.Fatal("a gateway anchored after its org was revoked")
+	}
+}
+
+// compromise takes cargo C1 over its excursion budget (35 minutes out of range, 30 allowed).
+func (h *harness) compromise() *fakeStub {
+	h.t.Helper()
+	now := h.l.now.Unix()
+	m, stub, err := h.anchor(h.window(now-200, now-100, 300, 1000, 2100))
+	if err != nil || m.Verdict != VerdictCompromised {
+		h.t.Fatalf("compromise: %+v %v", m, err)
+	}
+	return stub
+}
+
+func (h *harness) closeMonitoring(msp string) {
+	h.t.Helper()
+	h.must(msp, "user1", func(ctx ctxT) error { _, err := h.cc.CloseMonitoring(ctx, "C1"); return err })
+}
+
+func TestQuarantineOnBrokenColdChain(t *testing.T) {
+	h := coldSetup(t)
+	h.register("B2")
+	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchCargo(ctx, "C1", dist); return err })
+
+	// The event says whose cargo it is and what it carries.
+	stub := h.compromise()
+	var event coldChainEvent
+	if err := json.Unmarshal(stub.eventData[0], &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Owner != lab || event.To != dist || strings.Join(event.BatchIDs, ",") != "B1" || event.Reason == "" {
+		t.Fatalf("compromised event: %+v", event)
+	}
+
+	// A monitored cargo is received with its verdict final.
+	h.fails("close its monitoring first", dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveCargo(ctx, "C1"); return err })
+	h.closeMonitoring(dist)
+	stub = h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveCargo(ctx, "C1"); return err })
+	var received cargoEvent
+	if err := json.Unmarshal(stub.eventData[0], &received); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(received.Quarantined, ",") != "B1" || !strings.Contains(received.Reason, "out of range") {
+		t.Fatalf("received event: %+v", received)
+	}
+	b := h.batch("B1")
+	if b.State != StateQuarantined || b.StateBefore != StateInDistribution || b.Owner != dist || b.Cargo != "" ||
+		b.QuarantineCargo != "C1" || !strings.Contains(b.QuarantineReason, "out of range") {
+		t.Fatalf("quarantined batch: %+v", b)
+	}
+	// The recipient holds it, so its peer and the regulator's endorse what comes next.
+	if got := endorsers(t, stub, h, "B1"); strings.Join(got, ",") != "DistMSP,RegMSP" {
+		t.Fatalf("endorsers of a quarantined batch = %v", got)
+	}
+
+	// It cannot move in any way.
+	h.fails("QUARANTINED", dist, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchBatch(ctx, "B1", farma); return err })
+	h.fails("QUARANTINED", dist, "user1", func(ctx ctxT) error { _, err := h.cc.CreateCargo(ctx, "C9", []string{"B1"}); return err })
+	h.fails("QUARANTINED", dist, "user1", func(ctx ctxT) error {
+		_, err := h.cc.DispenseBatch(ctx, "B1", strings.Repeat("ab", 32))
+		return err
+	})
+
+	// Only the regulator releases it, with a reason, and only while it is quarantined.
+	h.fails("only the regulator", dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReleaseBatch(ctx, "B1", "ok"); return err })
+	h.fails("needs a reason", reg, "inspector", func(ctx ctxT) error { _, err := h.cc.ReleaseBatch(ctx, "B1", " "); return err })
+	h.fails("not QUARANTINED", reg, "inspector", func(ctx ctxT) error { _, err := h.cc.ReleaseBatch(ctx, "B2", "ok"); return err })
+	stub = h.must(reg, "inspector", func(ctx ctxT) error {
+		_, err := h.cc.ReleaseBatch(ctx, "B1", "excursión breve, estabilidad documentada")
+		return err
+	})
+	if stub.events[0] != EventBatchReleased {
+		t.Fatalf("events %v", stub.events)
+	}
+	b = h.batch("B1")
+	if b.State != StateInDistribution || b.StateBefore != "" || b.ReleaseReason == "" || b.QuarantineCargo != "C1" {
+		t.Fatalf("released batch: %+v", b)
+	}
+	// Free again: it goes on to the pharmacy.
+	h.moveTo("B1", dist, farma)
+}
+
+func TestQuarantinedBatchCanBeRecalled(t *testing.T) {
+	h := coldSetup(t)
+	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchCargo(ctx, "C1", dist); return err })
+	h.compromise()
+	h.closeMonitoring(dist)
+	h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveCargo(ctx, "C1"); return err })
+	h.must(reg, "inspector", func(ctx ctxT) error { _, err := h.cc.RecallBatch(ctx, "B1", "cadena de frío rota"); return err })
+	if b := h.batch("B1"); b.State != StateRecalled || b.StateBefore != StateQuarantined {
+		t.Fatalf("recalled from quarantine: %+v", b)
+	}
+	h.fails("not QUARANTINED", reg, "inspector", func(ctx ctxT) error { _, err := h.cc.ReleaseBatch(ctx, "B1", "ok"); return err })
+}
+
+func TestColdChainVerdictAtTheEndOfACargo(t *testing.T) {
+	// A compliant cargo quarantines nothing.
+	h := coldSetup(t)
+	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchCargo(ctx, "C1", dist); return err })
+	h.closeMonitoring(dist)
+	h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveCargo(ctx, "C1"); return err })
+	if b := h.batch("B1"); b.State != StateInDistribution || b.QuarantineReason != "" {
+		t.Fatalf("batch of a compliant cargo: %+v", b)
+	}
+
+	// Dissolving a cargo is not a way around a broken cold chain.
+	h = coldSetup(t)
+	h.compromise()
+	h.fails("close its monitoring first", lab, "user1", func(ctx ctxT) error { _, err := h.cc.DissolveCargo(ctx, "C1"); return err })
+	h.closeMonitoring(lab)
+	stub := h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DissolveCargo(ctx, "C1"); return err })
+	if stub.events[0] != EventCargoDissolved {
+		t.Fatalf("events %v", stub.events)
+	}
+	if b := h.batch("B1"); b.State != StateQuarantined || b.StateBefore != StateRegistered || b.Owner != lab || b.Cargo != "" {
+		t.Fatalf("batch of a dissolved compromised cargo: %+v", b)
+	}
+
+	// A batch recalled on the way stays RECALLED, not QUARANTINED.
+	h = coldSetup(t)
+	h.must(lab, "user1", func(ctx ctxT) error { _, err := h.cc.DispatchCargo(ctx, "C1", dist); return err })
+	h.compromise()
+	h.must(reg, "inspector", func(ctx ctxT) error { _, err := h.cc.RecallBatch(ctx, "B1", "desvío"); return err })
+	h.closeMonitoring(dist)
+	stub = h.must(dist, "user1", func(ctx ctxT) error { _, err := h.cc.ReceiveCargo(ctx, "C1"); return err })
+	if b := h.batch("B1"); b.State != StateRecalled || b.Owner != dist {
+		t.Fatalf("recalled batch of a compromised cargo: %+v", b)
+	}
+	if strings.Contains(string(stub.eventData[0]), "quarantined") {
+		t.Fatalf("event lists a recalled batch as quarantined: %s", stub.eventData[0])
 	}
 }

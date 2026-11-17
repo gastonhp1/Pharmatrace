@@ -46,16 +46,22 @@ Todos en un canal, `pharmatrace`. Las reglas de quién firma qué:
 | `IN_PHARMACY` | La farmacia al recibirlo | `ReceiveBatch` |
 | `DISPENSED` | La farmacia, con el hash de la receta | `DispenseBatch` |
 | `RECALLED` | Solo el regulador, en cualquier momento antes de la dispensa | `RecallBatch` |
+| `QUARANTINED` | El chaincode, cuando el lote sale de un cargamento con la cadena de frío rota | `ReceiveCargo`, `DissolveCargo` |
 
 El despacho tiene dos pasos (despacho y recepción) porque en Fabric el lote cambia de quién
 endosa en el momento del despacho: desde ahí lo controla el destinatario. Un lote al que el regulador
-le hace recall en viaje igual llega: el destinatario lo recibe (queda `RECALLED`) para ponerlo en
-cuarentena.
+le hace recall en viaje igual llega: el destinatario lo recibe (queda `RECALLED`) para apartarlo.
+
+**Cuarentena.** Un lote `QUARANTINED` no se despacha, no entra en otro cargamento y no se dispensa.
+Solo el regulador lo saca de ahí: con `ReleaseBatch` (revisó la evidencia y el lote sigue siendo
+apto; vuelve al estado que tenía) o con `RecallBatch`. Como cualquier cambio a un lote, lo endosan
+el peer de quien lo tiene y el del regulador.
 
 **Cargamentos** (`contract/cargo.go`). Lotes del mismo dueño que viajan juntos un tramo:
 `CreateCargo` los bloquea, `DispatchCargo` los despacha a todos o a ninguno, `ReceiveCargo` los
 entrega y libera, y `DissolveCargo` deshace uno que no salió (por ejemplo, para sacar un lote con
-recall).
+recall). Un cargamento monitoreado se recibe (o se disuelve) con el veredicto firme: primero hay
+que cerrar el monitoreo. Si el veredicto es `COMPROMISED`, sus lotes salen en cuarentena.
 
 **Cadena de frío** (`contract/coldchain.go`). Cada org registra sus valijas con su clave pública
 (`RegisterDevice`); el regulador fija las políticas y acepta los gateways IoT de una org
@@ -65,6 +71,11 @@ Merkle por ventana de lecturas, con mín/máx y
 segundos fuera de rango, y el chaincode da el veredicto del cargamento (`MONITORING`, `COMPLIANT`
 o `COMPROMISED`). `VerifyReading` comprueba una prueba de Merkle contra una raíz anclada. Detalle
 en [`iot/docs/ARCHITECTURE.md`](../iot/docs/ARCHITECTURE.md).
+
+**Eventos.** Cada transacción que cambia algo emite un evento (`BatchRecalled`,
+`ColdChainCompromised`, `CargoReceived` con los lotes que quedaron en cuarentena...; la lista está
+en `contract/model.go`). Fabric permite uno por transacción. La API los escucha y los convierte en
+notificaciones: ver [Notificaciones](../README.es.md#notificaciones).
 
 **Errores.** Los que el cliente puede resolver empiezan con un código (`NOT_FOUND`, `FORBIDDEN`,
 `CONFLICT`, `INVALID`, ver `contract/errors.go`) que la API traduce a un estado HTTP.

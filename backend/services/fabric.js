@@ -167,6 +167,14 @@ function createLedger(env = process.env) {
     }
 
     return {
+        // The chaincode events of the channel, as an async iterable (close() it when done).
+        // With a checkpointer that already saw events it resumes after the last one; otherwise
+        // it starts at the next block.
+        events(actor, { checkpoint, startBlock } = {}) {
+            const { gateway } = open(actorOf(actor), env);
+            const cfg = settings(env);
+            return gateway.getNetwork(cfg.channel).getChaincodeEvents(cfg.chaincode, { checkpoint, startBlock });
+        },
         evaluate(actor, name, list = [], { transient } = {}) {
             return run(async () => {
                 const { contract } = open(actorOf(actor), env);

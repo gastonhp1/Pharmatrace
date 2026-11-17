@@ -51,6 +51,12 @@ function batchRoutes(pharma, env = process.env) {
         handle("Error recalling batch", (req) => pharma.recallBatch(req.params.batchId, requireString((req.body || {}).reason, "reason")))
     );
 
+    // The regulator lifts a cold-chain quarantine.
+    router.post(
+        "/:batchId/release",
+        handle("Error releasing batch", (req) => pharma.releaseBatch(req.params.batchId, requireString((req.body || {}).reason, "reason")))
+    );
+
     // Commercial terms of the leg that starts with the current owner: { buyer, unitPrice, currency, quantity }
     router.put(
         "/:batchId/terms",

@@ -16,11 +16,29 @@ WORK=$(mktemp -d)
 RUN=$(date +%s)
 
 info "Starting the API on $API"
+# A local receiver for the webhooks: it appends every notification it gets to a file.
+HOOK_PORT=${HOOK_PORT:-3102}
+HOOK_SECRET="hook-$RANDOM$RANDOM"
+node -e '
+  const [port, file] = process.argv.slice(1);
+  require("http").createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      require("fs").appendFileSync(file, JSON.stringify({ signature: req.headers["x-pharmatrace-signature"], body }) + "\n");
+      res.end();
+    });
+  }).listen(Number(port), "127.0.0.1");
+' "$HOOK_PORT" "$WORK/hooks.jsonl" &
+HOOK_PID=$!
+
 (cd "$REPO/backend" && FABRIC_ORGS_DIR="$ORGS_DIR" API_KEY="$KEY" PORT="$HTTP_PORT" IOT_DATA_DIR="$WORK/iot" \
+  NOTIFICATIONS_DIR="$WORK/notifications" WEBHOOK_URLS="http://127.0.0.1:$HOOK_PORT/hook" WEBHOOK_SECRET="$HOOK_SECRET" \
   node server.js >"$WORK/api.log" 2>&1) &
 API_PID=$!
-trap 'kill $API_PID 2>/dev/null || true; echo "--- API log"; tail -n 40 "$WORK/api.log"' EXIT
+trap 'kill $API_PID $HOOK_PID 2>/dev/null || true; echo "--- API log"; tail -n 40 "$WORK/api.log"' EXIT
 retry 20 curl -sf "$API/healthz" >/dev/null || fatal "the API did not start"
+retry 20 grep -q "Listening to chaincode events" "$WORK/api.log" || fatal "the API is not listening to chaincode events"
 
 # req <method> <path> <expected status> [json body]: prints the response body.
 req() {
@@ -74,10 +92,11 @@ expect "$(req GET "/api/iot/cargo/$CA" 200 | jq -r .anchoredReadings)" 10 "ancho
 SEQ=$(req GET "/api/iot/cargo/$CA" 200 | jq -r .lastReading.seq)
 expect "$(req GET "/api/iot/cargo/$CA/proof/$SEQ?verify=true" 200 | jq -r .verifiedOnLedger)" true "Merkle proof checked by the chaincode"
 
-step "6. Cargo A travels Lab -> Dist; Dist closes the monitoring"
+step "6. Cargo A travels Lab -> Dist; the monitoring is closed, then Dist receives it"
 req POST "/api/cargo/$CA/dispatch" 200 '{"to":"DistMSP"}' | jq -c '{state, pendingTo}'
-req POST "/api/cargo/$CA/receive" 200 | jq -c '{state, owner}'
+req POST "/api/cargo/$CA/receive" 409 | jq -c . # a monitored cargo is received with its verdict final
 expect "$(req POST /api/iot/monitoring/close 200 "{\"cargoId\":\"$CA\"}" | jq -r .verdict)" COMPLIANT "verdict of cargo A"
+req POST "/api/cargo/$CA/receive" 200 | jq -c '{state, owner}'
 expect "$(req GET "/api/batches/$E1" 200 | jq -r '.owner + " " + .state')" "DistMSP IN_DISTRIBUTION" "$E1"
 
 step "7. Cargo B ($E3) with a strict policy: a temperature excursion compromises it"
@@ -91,6 +110,14 @@ CLOSE=$(req POST /api/iot/monitoring/close 200 "{\"cargoId\":\"$CB\"}")
 echo "$CLOSE" | jq -c .
 expect "$(echo "$CLOSE" | jq -r .verdict)" COMPROMISED "verdict of cargo B"
 
+step "7b. Cargo B still travels to Dist: $E3 arrives QUARANTINED until the regulator releases it"
+req POST "/api/cargo/$CB/dispatch" 200 '{"to":"DistMSP"}' >/dev/null
+req POST "/api/cargo/$CB/receive" 200 >/dev/null
+expect "$(req GET "/api/batches/$E3" 200 | jq -r '.owner + " " + .state + " " + .quarantineCargo')" "DistMSP QUARANTINED $CB" "$E3"
+req POST "/api/batches/$E3/dispatch" 409 '{"to":"FarmaMSP"}' | jq -c .
+req POST "/api/batches/$E3/release" 200 '{"reason":"Excursión breve, estabilidad documentada por el laboratorio"}' | jq -c '{state, releaseReason}'
+expect "$(req GET "/api/batches/$E3" 200 | jq -r .state)" IN_DISTRIBUTION "$E3 after the release"
+
 step "8. $E1 goes Dist -> Farma on its own and is dispensed; $E2 is recalled at Dist"
 req POST "/api/batches/$E1/dispatch" 200 '{"to":"FarmaMSP"}' >/dev/null
 req POST "/api/batches/$E1/receive" 200 >/dev/null
@@ -102,8 +129,23 @@ req GET "/api/batches/$E1/history" 200 | jq -r '.[] | "  \(.timestamp)  \(.batch
 step "9. Errors map to HTTP statuses"
 req POST "/api/batches/$E2/recall" 409 '{"reason":"otra vez"}' | jq -c .
 req GET /api/batches/NO-EXISTE 404 | jq -c .
-req POST "/api/batches/$E3/dispense" 409 '{"patientRef":"x"}' | jq -c . # still at the lab
+req POST "/api/batches/$E3/dispense" 409 '{"patientRef":"x"}' | jq -c . # still at the distributor
 curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/batches/$E3/receive" | grep -q 401 && ok "no API key -> 401"
+
+step "10. Notifications: the chaincode events reached the feed and the webhook"
+# The events of this run, oldest first. The listener gets them as blocks are committed.
+feed() { req GET "/api/notifications?limit=200$1" 200 | jq -c --arg run "$RUN" '[.[] | select(.message | contains($run))] | reverse'; }
+retry 20 bash -c "curl -sf '$API/api/notifications?limit=200' | jq -e --arg b '$E2' 'any(.[]; .event == \"BatchRecalled\" and .batchIds == [\$b])' >/dev/null" ||
+  fatal "the recall of $E2 never reached the feed"
+feed "" | jq -r '.[] | "  \(.severity)\t\(.event)\t\(.orgs | join(","))\t\(.message)"'
+expect "$(feed "&severity=critical" | jq -c '[.[].event]')" '["ColdChainCompromised","CargoReceived","BatchRecalled"]' "critical notifications"
+expect "$(feed "" | jq -c --arg c "$CB" '.[] | select(.event == "ColdChainCompromised") | .orgs')" '["LabMSP","RegMSP"]' "who is warned about cargo B"
+expect "$(feed "" | jq -c --arg c "$CB" '.[] | select(.event == "CargoReceived") | .batchIds')" "[\"$E3\"]" "quarantined on arrival"
+expect "$(feed "&org=FarmaMSP" | jq -c '[.[].event]')" '["BatchDispatched"]' "what Farma hears about"
+retry 20 bash -c "[[ \$(grep -c . '$WORK/hooks.jsonl') -ge \$(curl -sf '$API/api/notifications?limit=200' | jq length) ]]" || fatal "the webhook did not get every notification"
+LAST=$(tail -n 1 "$WORK/hooks.jsonl")
+expect "$(echo "$LAST" | jq -r .signature)" \
+  "sha256=$(echo "$LAST" | jq -j .body | openssl dgst -sha256 -hmac "$HOOK_SECRET" | sed 's/^.* //')" "webhook signature (HMAC-SHA256)"
 
 echo
 ok "API end-to-end test passed"
