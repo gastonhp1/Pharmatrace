@@ -1,192 +1,188 @@
 # PharmaTrace
 
-**English** · [Español](README.es.md)
+[English](README.en.md) · **Español**
 
-Drug traceability on **Hyperledger Fabric**, from the manufacturer to the patient, with IoT cold-chain
-monitoring. Every batch keeps an immutable record of who held it and in what state, and every shipment keeps
-signed evidence of the temperature it travelled at.
+Trazabilidad de medicamentos sobre **Hyperledger Fabric**, desde el laboratorio hasta el paciente, con
+monitoreo de la cadena de frío por IoT. Cada lote queda con un historial inmutable de quién lo tuvo y en qué
+estado, y cada cargamento con la evidencia firmada de la temperatura a la que viajó.
 
-It is a **permissioned** network: manufacturers, distributors, pharmacies and the regulator are known
-organizations, each with its own certificate authority, its own peer and its own copy of the chaincode. Nobody
-pays gas, prices agreed between two parties are not published, and the regulator co-signs every operation.
+Es una red **permisionada**: laboratorios, droguerías, farmacias y el regulador son organizaciones conocidas, cada
+una con su autoridad certificante, su peer y su copia del chaincode. Nadie paga gas, los precios entre las partes
+no se publican, y el regulador co-firma cada operación.
 
-> Prototype: it runs on a local Docker network and in CI. It is not production ready, see
-> [Limitations](#limitations). The first version, on Ethereum (Solidity + Hardhat), lives in
+> Prototipo: corre en una red local de Docker y en la CI. No está listo para producción, ver
+> [Limitaciones](#limitaciones). La primera versión, sobre Ethereum (Solidity + Hardhat), quedó en
 > [gastonhp1/Pharmatrace-evm](https://github.com/gastonhp1/Pharmatrace-evm).
 
-| Part | Where | What it does |
+| Parte | Dónde | Qué hace |
 | --- | --- | --- |
-| Chaincode | [`fabric/chaincode/pharmatrace`](fabric/chaincode/pharmatrace) | Go contract: batches, cargoes, dispensing, recalls, private prices and cold chain |
-| Network | [`fabric/network`](fabric/network) | 4 organizations, each with its Fabric CA, 3 Raft orderers, chaincode as a service. `network.sh` starts and tests it |
-| PKI | [`fabric/docs/PKI.md`](fabric/docs/PKI.md) | Identity issuance and runbook: expiry, renewal, rotating an orderer's TLS certificate, revocation with CRLs |
-| Kubernetes | [`fabric/helm/pharmatrace-network`](fabric/helm/pharmatrace-network) | Helm chart of the network; `k8s.sh` runs it on kind (see [`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)) |
-| API | [`backend/`](backend) | REST (Express) on the Fabric Gateway SDK; it is also the IoT gateway |
-| IoT | [`iot/`](iot) | Sensor case ("valija"): reading format, simulator, hardware and threat model |
-| Firmware | [Pharmatrace-firmware](https://github.com/gastonhp1/Pharmatrace-firmware) | ESP32 firmware of the case |
-| Web | [PharmaTrace-UI](https://github.com/gastonhp1/PharmaTrace-UI) | React app on this API |
-| Mobile | [PharmaTrace-mobile](https://github.com/gastonhp1/PharmaTrace-mobile) | Android (Kotlin): login, QR scan and unlocking the PharmaBox over BLE |
+| Chaincode | [`fabric/chaincode/pharmatrace`](fabric/chaincode/pharmatrace) | Contrato en Go: lotes, cargamentos, dispensa, recall, precios privados y cadena de frío |
+| Red | [`fabric/network`](fabric/network) | 4 organizaciones con su Fabric CA, 3 orderers Raft, chaincode como servicio. `network.sh` la levanta y la prueba |
+| PKI | [`fabric/docs/PKI.md`](fabric/docs/PKI.md) | Emisión de identidades y runbook: vencimientos, renovar, rotar el TLS de un orderer, revocar con CRL |
+| Kubernetes | [`fabric/helm/pharmatrace-network`](fabric/helm/pharmatrace-network) | Chart de Helm de la red; `k8s.sh` la corre en kind (ver [`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)) |
+| API | [`backend/`](backend) | REST (Express) sobre el Fabric Gateway SDK; también es el gateway IoT |
+| IoT | [`iot/`](iot) | Valija con sensores: formato de lectura, simulador, hardware y modelo de amenazas |
+| Firmware | [Pharmatrace-firmware](https://github.com/gastonhp1/Pharmatrace-firmware) | ESP32 de la valija |
+| Web | [PharmaTrace-UI](https://github.com/gastonhp1/PharmaTrace-UI) | App React sobre esta API |
+| Mobile | [PharmaTrace-mobile](https://github.com/gastonhp1/PharmaTrace-mobile) | Android (Kotlin): login, escaneo del QR y apertura de la PharmaBox por BLE |
 
-The deeper docs (`fabric/`, `iot/`) are in Spanish.
-
-## How it works
+## Cómo funciona
 
 ```
- Manufacturer ──dispatch──▶ Distributor ──dispatch──▶ Pharmacy ──dispense──▶ patient (only a hash)
-    LabMSP                    DistMSP                  FarmaMSP
-       └─────────── the Regulator (RegMSP) co-signs everything and is the only one that recalls ───────────┘
+ Laboratorio ──despacha──▶ Droguería ──despacha──▶ Farmacia ──dispensa──▶ paciente (solo un hash)
+   LabMSP                    DistMSP                 FarmaMSP
+      └──────────── el Regulador (RegMSP) co-firma todo y es el único que hace recalls ────────────┘
 ```
 
-- **Batches.** The manufacturer registers them (GTIN, lot, expiry date, units). They only move to the next role,
-  in two steps: the holder **dispatches** and the recipient **receives**. Each batch has its own endorsement policy
-  (*state-based endorsement*): changing it takes the signatures of the holder's peer and the regulator's peer.
-- **Units.** The holder can **split** a batch: 300 of its 1,000 units go into a new batch with the same lot, which
-  travels on its own and points to the batch it came from. A pharmacy **dispenses** a few units at a time; the
-  batch is `DISPENSED` when none are left.
-- **Cargoes.** Batches of the same owner travel together from one org to the next, with a sensor case. While in
-  a cargo they only move with it.
-- **Prices.** What the distributor paid the manufacturer is visible only to those two orgs (*private data
-  collection*); the rest of the channel sees a hash, and the regulator can check a price without seeing it.
-- **Recalls.** Only the regulator, at any point before dispensing. A recall reaches the batch and every batch
-  split from it, wherever they are: recalling the batch the manufacturer registered recalls the whole lot. A
-  recalled batch never moves again.
-- **Cold chain.** The case signs every reading (ECDSA P-256 in a secure element). The gateway verifies the
-  signatures against the key registered in the ledger and anchors one Merkle root per window; the chaincode
-  gives the verdict (`COMPLIANT` or `COMPROMISED`). Details in [`iot/`](iot/README.md).
-- **Quarantine.** The batches of a cargo that arrived with a broken cold chain are blocked (`QUARANTINED`): they
-  cannot be dispatched or dispensed until the regulator releases or recalls them.
-- **Notifications.** The chaincode emits an event for every change; the API listens to them and tells the orgs
-  involved (a recall, a cargo that lost its cold chain, batches in quarantine, a shipment on its way) through a
-  feed and webhooks.
-- **Identities.** Each organization issues its certificates with its own Fabric CA. The IoT gateway is
-  recognized by an attribute in its certificate (`pharmatrace.role=iot-gateway`), which only its org's CA can
-  set (attribute-based access control).
+- **Lotes.** El laboratorio los registra (GTIN, lote, vencimiento, unidades). Solo avanzan al rol siguiente, en dos
+  pasos: quien lo tiene lo **despacha** y el destinatario lo **recibe**. Cada lote tiene su propia política de
+  endorsement (*state-based endorsement*): para cambiarlo tienen que firmar los peers de quien lo tiene y del regulador.
+- **Unidades.** Quien tiene un lote lo puede **dividir**: 300 de sus 1.000 unidades pasan a un lote nuevo con el mismo
+  número de lote, que viaja por su cuenta y apunta al lote del que salió. La farmacia **dispensa** de a pocas
+  unidades; el lote queda `DISPENSED` cuando no le queda ninguna.
+- **Cargamentos.** Varios lotes del mismo dueño viajan juntos de una org a la siguiente, con una valija. Mientras
+  están en el cargamento solo se mueven con él.
+- **Precios.** Lo que pagó la droguería al laboratorio lo ven solo esas dos orgs (*private data collection*); el
+  resto del canal ve un hash, y el regulador puede comprobar un precio sin verlo.
+- **Recall.** Solo el regulador, en cualquier punto antes de la dispensa. Alcanza al lote y a todos los que se
+  dividieron de él, estén donde estén: el recall del lote que registró el laboratorio retira el lote entero. Un lote
+  retirado no se mueve más.
+- **Cadena de frío.** La valija firma cada lectura (ECDSA P-256 en un secure element). El gateway verifica las
+  firmas contra la clave registrada en el ledger y ancla una raíz de Merkle por ventana; el chaincode da el
+  veredicto (`COMPLIANT` o `COMPROMISED`). Detalle en [`iot/`](iot/README.md).
+- **Cuarentena.** Los lotes de un cargamento que llegó con la cadena de frío rota quedan bloqueados
+  (`QUARANTINED`): no se despachan ni se dispensan hasta que el regulador los libera o les hace recall.
+- **Notificaciones.** El chaincode emite un evento por cada cambio; la API los escucha y avisa a las orgs
+  afectadas (un recall, un cargamento que perdió el frío, lotes en cuarentena, un envío en camino) por un feed y
+  por webhooks.
+- **Identidades.** Cada organización emite sus certificados con su propia Fabric CA. El gateway IoT se reconoce
+  por un atributo de su certificado (`pharmatrace.role=iot-gateway`) que solo puede poner la CA de su org
+  (control de acceso por atributo).
 
-The full rules (who endorses what, states, chaincode functions) are in [`fabric/README.md`](fabric/README.md).
-To learn Fabric through the project: [`fabric/docs/APRENDER.md`](fabric/docs/APRENDER.md).
+Las reglas completas (quién endosa qué, estados, funciones del chaincode) están en
+[`fabric/README.md`](fabric/README.md). Para aprender Fabric con el proyecto: [`fabric/docs/APRENDER.md`](fabric/docs/APRENDER.md).
 
-## Running it
+## Correrlo
 
-You need Linux or WSL2, Docker with Compose v2, `curl`, `jq`, Node 22 and Python 3. On Windows: Docker Desktop
-with the WSL2 integration, everything from the Ubuntu terminal and with the repo cloned inside WSL (not under
-`/mnt/c`).
+Necesitás Linux o WSL2, Docker con Compose v2, `curl`, `jq`, Node 22 y Python 3. En Windows: Docker Desktop con la
+integración WSL2, todo desde la terminal de Ubuntu y con el repo clonado dentro de WSL (no en `/mnt/c`).
 
 ```bash
 cd fabric/network
-./network.sh prereq    # Fabric 3.1.5 binaries and fabric-ca-client into bin/
-./network.sh all       # CAs + network + channel + chaincode + smoke test with the Fabric CLI
+./network.sh prereq    # binarios de Fabric 3.1.5 y fabric-ca-client en bin/
+./network.sh all       # CAs + red + canal + chaincode + smoke test con el CLI de Fabric
 
 cd ../../backend
 npm ci
-cp .env.example .env   # and set an API_KEY
+cp .env.example .env   # y poné un API_KEY
 npm start              # http://localhost:3001
 ```
 
-`./network.sh api` runs the whole trip over HTTP (batches, cargoes, private prices, two simulated cases, a
-recall) against the running network. It is the same thing CI runs. `./network.sh pki ...` is the certificate
-runbook (see [`fabric/docs/PKI.md`](fabric/docs/PKI.md)). `./network.sh down` removes everything.
+`./network.sh api` hace todo el recorrido por HTTP (lotes, cargamentos, precios privados, dos valijas simuladas,
+recall) contra la red levantada. Es lo mismo que corre la CI. `./network.sh pki ...` es el runbook de certificados
+(ver [`fabric/docs/PKI.md`](fabric/docs/PKI.md)). `./network.sh down` borra todo.
 
-On Kubernetes, `./k8s.sh all` does the same on a local kind cluster with the Helm chart; `./k8s.sh api` and
-`./k8s.sh pki-test` run the same tests against it. See [`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md).
+En Kubernetes, `./k8s.sh all` hace lo mismo en un cluster kind local con el chart de Helm; `./k8s.sh api` y
+`./k8s.sh pki-test` corren las mismas pruebas contra el cluster. Ver [`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md).
 
 ## API
 
-Reads (`GET`) are public, except prices. Everything else needs the `x-api-key` header with `API_KEY`, except
-`/api/auth` and `/api/box`, which use per-user sessions (the mobile app).
+Las lecturas (`GET`) son públicas, salvo los precios. Todo lo demás pide el header `x-api-key` con `API_KEY`,
+salvo `/api/auth` y `/api/box`, que usan sesiones por usuario (la app móvil).
 
-The API is **custodial**: it holds one identity per org (the certificates the network issues) and acts with the
-right one. It dispatches as the batch owner, receives as the recipient and recalls as the regulator. In a real
-consortium each org runs its own API with only its own identity.
+La API es **custodial**: tiene una identidad de cada org (los certificados que genera la red) y actúa con la que
+corresponde. Despacha como el dueño del lote, recibe como el destinatario y hace el recall como el regulador. En un
+consorcio real cada org corre su propia API con solo su identidad.
 
-| Method | Route | Body / query |
+| Método | Ruta | Body / query |
 | --- | --- | --- |
-| POST | `/api/batches` | `batchId`, `gtin`, `product`, `lot`, `expiryDate` (YYYY-MM-DD), `quantity` (units) |
+| POST | `/api/batches` | `batchId`, `gtin`, `product`, `lot`, `expiryDate` (YYYY-MM-DD), `quantity` (unidades) |
 | GET | `/api/batches/:id` | |
-| GET | `/api/batches/:id/history` | Every version of the batch: the chain of custody |
-| POST | `/api/batches/:id/split` | `newBatchId`, `quantity`. The owner takes units out into a new batch |
-| GET | `/api/batches/:id/splits` | Batches split from it; `?all=true`: and from those (what a recall reaches) |
+| GET | `/api/batches/:id/history` | Todas las versiones del lote: la cadena de custodia |
+| POST | `/api/batches/:id/split` | `newBatchId`, `quantity`. El dueño pasa unidades a un lote nuevo |
+| GET | `/api/batches/:id/splits` | Lotes divididos de este; `?all=true`: y de esos (lo que alcanza un recall) |
 | POST | `/api/batches/:id/dispatch` | `to` (MSP ID: `DistMSP`, `FarmaMSP`) |
 | POST | `/api/batches/:id/receive` | |
-| POST | `/api/batches/:id/dispense` | `patientRef` (only its SHA-256 is stored), `quantity` (optional: every unit left) |
-| GET | `/api/batches/:id/dispensations` | Units handed to patients, oldest first |
-| POST | `/api/batches/:id/recall` | `reason`. Also recalls every batch split from it |
-| POST | `/api/batches/:id/release` | `reason`. The regulator lifts a quarantine |
-| PUT | `/api/batches/:id/terms` | `buyer`, `unitPrice` (string, `"1234.50"`), `currency`, `quantity` |
-| GET | `/api/batches/:id/terms` | `?leg=manufacturer\|distributor&as=<MSP>` (needs `x-api-key`) |
+| POST | `/api/batches/:id/dispense` | `patientRef` (se guarda solo su SHA-256), `quantity` (opcional: todas las que quedan) |
+| GET | `/api/batches/:id/dispensations` | Unidades entregadas a pacientes, de la más vieja a la más nueva |
+| POST | `/api/batches/:id/recall` | `reason`. También retira los lotes divididos de este |
+| POST | `/api/batches/:id/release` | `reason`. El regulador levanta una cuarentena |
+| PUT | `/api/batches/:id/terms` | `buyer`, `unitPrice` (texto, `"1234.50"`), `currency`, `quantity` |
+| GET | `/api/batches/:id/terms` | `?leg=manufacturer\|distributor&as=<MSP>` (pide `x-api-key`) |
 | POST | `/api/batches/:id/terms/verify` | `leg`, `seller`, `buyer`, `unitPrice`, `currency`, `quantity` → `{ matches }` |
 | POST | `/api/cargo` | `cargoId`, `batchIds[]` |
 | GET | `/api/cargo/:id` | |
 | POST | `/api/cargo/:id/dispatch` | `to` |
-| POST | `/api/cargo/:id/receive` | A monitored cargo needs its monitoring closed first |
-| POST | `/api/cargo/:id/dissolve` | Undoes a cargo that has not left yet |
+| POST | `/api/cargo/:id/receive` | Si el cargamento está monitoreado, primero hay que cerrar el monitoreo |
+| POST | `/api/cargo/:id/dissolve` | Deshace un cargamento que no salió |
 | POST | `/api/orgs` | `mspId`, `role` (`manufacturer`, `distributor`, `pharmacy`) |
 | GET | `/api/orgs/:msp` · `/api/orgs/:msp/batches` | |
-| GET | `/api/notifications` | `?org=<MSP>&severity=info\|warning\|critical&limit=50`, newest first |
-| | `/api/iot/...` | Cases, policies, readings, anchoring and proofs: see [`iot/`](iot/README.md) |
-| | `/api/auth/...` · `/api/box/...` | User login (Bearer session) and PharmaBox unlock tokens for the mobile app: see [`iot/docs/BOX_UNLOCK.md`](iot/docs/BOX_UNLOCK.md) |
+| GET | `/api/notifications` | `?org=<MSP>&severity=info\|warning\|critical&limit=50`, las más nuevas primero |
+| | `/api/iot/...` | Valijas, políticas, lecturas, anclaje y pruebas: ver [`iot/`](iot/README.md) |
+| | `/api/auth/...` · `/api/box/...` | Login de usuarios (sesión Bearer) y tokens de apertura de la PharmaBox para la app móvil: ver [`iot/docs/BOX_UNLOCK.md`](iot/docs/BOX_UNLOCK.md) |
 
-Errors are always `{"error": "<reason>"}`. The chaincode tags its errors with a code and the API maps it:
+Errores, siempre `{"error": "<motivo>"}`. El chaincode marca sus errores con un código y la API lo traduce:
 
-| HTTP | Chaincode code | Examples |
+| HTTP | Código del chaincode | Ejemplos |
 | --- | --- | --- |
-| 400 | `INVALID` | Malformed GTIN or date, negative price |
-| 401 | | Missing or wrong `x-api-key`, or missing/expired session on `/api/box` |
-| 403 | `FORBIDDEN` | Not the owner, not the regulator, not a member of the private collection |
-| 404 | `NOT_FOUND` | The batch, cargo or org does not exist |
-| 409 | `CONFLICT` | Already exists, the batch travels in a cargo or is quarantined, the recipient does not have the next role, the cargo is still being monitored, another transaction touched the same data (MVCC) |
-| 503 | | The network is unreachable, the Fabric identities are missing, or `API_KEY` is not set |
+| 400 | `INVALID` | GTIN o fecha mal formados, precio negativo |
+| 401 | | Falta `x-api-key` o es incorrecta |
+| 403 | `FORBIDDEN` | No es el dueño, no es el regulador, no es miembro de la colección privada |
+| 404 | `NOT_FOUND` | El lote, el cargamento o la org no existen |
+| 409 | `CONFLICT` | Ya existe, el lote viaja en un cargamento o está en cuarentena, el destinatario no tiene el rol siguiente, el cargamento todavía se está monitoreando, otra transacción tocó lo mismo (MVCC) |
+| 503 | | La red no responde, o faltan las identidades de Fabric, o falta `API_KEY` |
 
-## Notifications
+## Notificaciones
 
-The API listens to the chaincode events of the channel (with the regulator's identity) and keeps the ones someone
-has to act on:
+La API escucha los eventos del chaincode en el canal (con la identidad del regulador) y se queda con los que
+alguien tiene que atender:
 
-| Event | Severity | Who it is for |
+| Evento | Severidad | Para quién |
 | --- | --- | --- |
-| `ColdChainCompromised` | critical | The cargo's owner, its recipient and the regulator |
-| `CargoReceived` / `CargoDissolved` with quarantined batches | critical | Whoever holds them and the regulator |
-| `BatchRecalled` | critical | Whoever holds the batch and the regulator |
-| `BatchReleased` | info | Whoever holds the batch and the regulator |
-| `CargoDispatched` / `BatchDispatched` | info | The recipient |
+| `ColdChainCompromised` | critical | El dueño del cargamento, su destinatario y el regulador |
+| `CargoReceived` / `CargoDissolved` con lotes en cuarentena | critical | Quien los tiene y el regulador |
+| `BatchRecalled` | critical | Quien tiene el lote y el regulador |
+| `BatchReleased` | info | Quien tiene el lote y el regulador |
+| `CargoDispatched` / `BatchDispatched` | info | El destinatario |
 
 ```bash
 curl "localhost:3001/api/notifications?org=DistMSP&severity=critical"
 ```
 
-With `WEBHOOK_URLS` every notification is also sent as a JSON POST; with `WEBHOOK_SECRET` the body is signed in
-`x-pharmatrace-signature: sha256=<HMAC-SHA256>`. The listener keeps a checkpoint of the last event it handled, so
-after a restart or a lost connection it resumes where it was; a repeated event is not notified twice. Webhook
-delivery is best effort (three attempts): the feed is the record.
+Con `WEBHOOK_URLS` cada notificación sale además como un POST con JSON; con `WEBHOOK_SECRET` el body va firmado
+en `x-pharmatrace-signature: sha256=<HMAC-SHA256>`. El listener guarda un checkpoint del último evento que
+procesó: después de un reinicio o de un corte sigue desde ahí, y un evento repetido no se notifica dos veces. La
+entrega por webhook es de mejor esfuerzo (tres intentos): el registro es el feed.
 
 ## Tests
 
 ```bash
 cd fabric/chaincode/pharmatrace && go test ./...   # chaincode
-cd backend && npm test                             # API, IoT gateway, signatures, Merkle
-python3 -m unittest discover -s iot/simulator      # simulator
-cd fabric/network && ./network.sh all && ./network.sh api   # real network, through the CLI and over HTTP
+cd backend && npm test                             # API, gateway IoT, firmas, Merkle
+python3 -m unittest discover -s iot/simulator      # simulador
+cd fabric/network && ./network.sh all && ./network.sh api   # red real, por CLI y por HTTP
 ```
 
-In CI, [`fabric.yml`](.github/workflows/fabric.yml) brings up the whole network on every PR and runs the smoke
-test, the HTTP trip, a chaincode upgrade and the certificate runbook (renew a peer, rotate an orderer's TLS
-certificate, revoke with a CRL). [`ci.yml`](.github/workflows/ci.yml) builds the API image, scans it with Trivy,
-signs it and promotes it through GitOps. A third job installs the Helm chart on kind and runs the smoke test, the
-HTTP trip and the certificate runbook there too.
+En la CI, [`fabric.yml`](.github/workflows/fabric.yml) levanta la red completa en cada PR y corre el smoke test,
+el recorrido por HTTP, una actualización del chaincode y el runbook de certificados (renovar un peer, rotar el TLS
+de un orderer, revocar con CRL). [`ci.yml`](.github/workflows/ci.yml) construye la imagen
+de la API, la escanea con Trivy, la firma y la promueve por GitOps. Un tercer job instala el chart de Helm en kind
+y corre ahí también el smoke test, el recorrido por HTTP y el runbook de certificados.
 
-## Limitations
+## Limitaciones
 
-- **Identities:** each org has its own Fabric CA, but the API holds the identities of all of them. The right
-  setup is one API per org; and the CAs are online roots without an HSM. See [`fabric/docs/PKI.md`](fabric/docs/PKI.md).
-- **Notifications:** the feed is a file read by a single API process, and it tells orgs apart only by a query
-  parameter: anyone can read any org's notifications (they repeat what is public on the channel). There is no
-  mobile push yet.
-- **IoT:** the gateway stores readings in files (single process); it does not detect data gaps; the evidence
-  proves what was measured, not that the sensor was not tampered with. Details in
-  [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
-- **Model:** the chain is fixed (manufacturer → distributor → pharmacy), with no returns. Batches are counted in
-  units and can be split, but units have no serial numbers, which Argentina's ANMAT traceability system requires.
-  A recall reaches up to 200 batches of one lot in a single transaction; past that it has to go by parts.
-- **Deployment:** Docker Compose and kind (Helm). AKS with GitOps is the next step: it needs the chaincode image in
-  a registry, gRPC exposed with TLS passthrough and the identity Secrets loaded from Key Vault
-  ([`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)). Until then the API deployed in the cluster has no
-  network to connect to.
-- **Hardware:** the mobile app and the PharmaBox firmware have not been tested on real devices yet.
+- **Identidades:** cada org tiene su Fabric CA, pero la API tiene las identidades de todas. Lo correcto es una
+  API por org; y las CAs son raíces online sin HSM. Ver [`fabric/docs/PKI.md`](fabric/docs/PKI.md).
+- **Notificaciones:** el feed es un archivo que lee un solo proceso de la API, y separa las orgs solo por un
+  parámetro: cualquiera puede leer las notificaciones de cualquier org (repiten lo que es público en el canal).
+  Todavía no hay push al celular.
+- **IoT:** el gateway guarda las lecturas en archivos (un solo proceso); no detecta huecos de datos; la evidencia
+  prueba qué se midió, no que el sensor no fuera manipulado. Detalle en [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
+- **Modelo:** la cadena es fija (laboratorio → droguería → farmacia), sin devoluciones. Los lotes se cuentan en
+  unidades y se pueden dividir, pero las unidades no tienen número de serie, como pide el sistema de trazabilidad de
+  ANMAT. Un recall alcanza hasta 200 lotes de un mismo lote de origen en una transacción; si son más, va por partes.
+- **Despliegue:** Docker Compose y kind (Helm). AKS con GitOps es el paso siguiente: falta publicar la imagen del
+  chaincode en un registro, exponer gRPC con TLS passthrough y cargar los Secrets de identidades desde Key Vault
+  ([`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)). Hasta entonces la API desplegada en el cluster no tiene
+  una red a la que conectarse.
+- **Hardware:** la app mobile y el firmware de la PharmaBox todavía no se probaron en dispositivos reales.

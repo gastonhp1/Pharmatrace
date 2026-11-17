@@ -46,6 +46,13 @@ queda `ENDORSEMENT_POLICY_FAILURE`.
 - **De la colección privada** (`network/collections_config.json`): las escrituras de precios
   necesitan a las dos orgs de ese tramo.
 
+Una transacción que toca varias claves tiene que cumplir la política de **cada una**. El recall de
+un lote repartido (`RecallBatch` alcanza a todo lo que se dividió de él) escribe partes que tienen
+la droguería y la farmacia: lo tienen que endosar las dos más el regulador. El paso 10 de
+`smoke.sh` lo muestra: con los peers de laboratorio y regulador solamente falla al validar, y pasa
+cuando se suma el de la droguería. Por eso la API calcula los endosantes (`recallBatch` en
+`backend/services/pharmatrace.js`) en vez de dejarlo al Gateway.
+
 Pregunta para pensar: ¿por qué el chaincode igual chequea que quien llama sea el dueño, si la
 política ya lo exige? (Pista: la política habla de qué **peers** firman; el chequeo del código, de
 qué **cliente** pidió la operación. Son cosas distintas.)
@@ -64,10 +71,13 @@ canal guarda su hash. Ver `contract/terms.go`:
 
 - **Historial:** cada versión de una clave queda en el ledger. `GetBatchHistory` usa
   `GetHistoryForKey` y así sale la cadena de custodia sin guardarla a mano.
-- **Claves compuestas:** `BatchesByOwner` busca por prefijo en un índice `owner~batch`. Funciona
-  con LevelDB, sin CouchDB.
-- **Eventos:** uno por transacción (`emit` en `helpers.go`). Un cliente los puede escuchar con
-  `network.getChaincodeEvents` del Fabric Gateway SDK; la API todavía no lo hace.
+- **Claves compuestas:** `BatchesByOwner` busca por prefijo en un índice `owner~batch`, y
+  `BatchSplits` en uno `parent~batch`. Funciona con LevelDB, sin CouchDB.
+- **Eventos:** uno por transacción (`emit` en `helpers.go`). La API los escucha con
+  `network.getChaincodeEvents` del Fabric Gateway SDK y los convierte en avisos
+  (`backend/notifications/`). Llegan recién cuando el bloque se confirma, y con un *checkpointer*
+  el listener retoma desde el último evento que procesó después de un corte: el peer puede repetir
+  eventos, así que procesarlos tiene que ser idempotente (acá, el ID de la transacción).
 
 ## 6. Ciclo de vida del chaincode
 
