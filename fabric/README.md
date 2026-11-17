@@ -89,7 +89,7 @@ en [`iot/docs/ARCHITECTURE.md`](../iot/docs/ARCHITECTURE.md).
 **Eventos.** Cada transacción que cambia algo emite un evento (`BatchRecalled`,
 `ColdChainCompromised`, `CargoReceived` con los lotes que quedaron en cuarentena...; la lista está
 en `contract/model.go`). Fabric permite uno por transacción. La API los escucha y los convierte en
-notificaciones: ver [Notificaciones](../README.es.md#notificaciones).
+notificaciones: ver [Notificaciones](../README.md#notificaciones).
 
 **Errores.** Los que el cliente puede resolver empiezan con un código (`NOT_FOUND`, `FORBIDDEN`,
 `CONFLICT`, `INVALID`, ver `contract/errors.go`) que la API traduce a un estado HTTP.
