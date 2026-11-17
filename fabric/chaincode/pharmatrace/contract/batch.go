@@ -79,7 +79,7 @@ var (
 // RegisterBatch creates a batch. The caller has to be a manufacturer, which becomes its owner.
 func (c *PharmaTrace) RegisterBatch(
 	ctx contractapi.TransactionContextInterface,
-	batchID string, gtin string, product string, lot string, expiryDate string,
+	batchID string, gtin string, product string, lot string, expiryDate string, quantity int,
 ) (*Batch, error) {
 	msp, err := clientMSP(ctx)
 	if err != nil {
@@ -105,6 +105,9 @@ func (c *PharmaTrace) RegisterBatch(
 	if _, err := time.Parse("2006-01-02", expiryDate); err != nil {
 		return nil, invalid("invalid expiry date %q: use YYYY-MM-DD", expiryDate)
 	}
+	if quantity < 1 || quantity > MaxBatchQuantity {
+		return nil, invalid("quantity has to be between 1 and %d units", MaxBatchQuantity)
+	}
 
 	var existing Batch
 	exists, err := getJSON(ctx, objBatch, []string{batchID}, &existing)
@@ -124,6 +127,7 @@ func (c *PharmaTrace) RegisterBatch(
 		Manufacturer: msp,
 		Owner:        msp,
 		State:        StateRegistered,
+		Quantity:     quantity,
 	}
 	if err := c.saveBatch(ctx, batch, ""); err != nil {
 		return nil, err
@@ -179,36 +183,13 @@ func (c *PharmaTrace) ReceiveBatch(ctx contractapi.TransactionContextInterface, 
 	return batch, emit(ctx, EventBatchReceived, batchEvent{BatchID: batchID, Owner: msp, State: batch.State})
 }
 
-// DispenseBatch records that a pharmacy handed the batch to a patient. Only a hash of the patient
-// reference goes to the ledger, never personal data.
-func (c *PharmaTrace) DispenseBatch(ctx contractapi.TransactionContextInterface, batchID string, patientRefHash string) (*Batch, error) {
-	batch, err := c.ownedBatch(ctx, batchID)
-	if err != nil {
-		return nil, err
-	}
-	if batch.State != StateInPharmacy {
-		return nil, conflict("batch %s is %s, it has to be IN_PHARMACY to be dispensed", batchID, batch.State)
-	}
-	if batch.Cargo != "" {
-		return nil, conflict("batch %s is still in cargo %s", batchID, batch.Cargo)
-	}
-	patientRefHash = strings.ToLower(patientRefHash)
-	if !sha256Hex.MatchString(patientRefHash) {
-		return nil, invalid("patientRefHash has to be a sha256 in hex (64 characters)")
-	}
-
-	batch.State = StateDispensed
-	batch.PatientRef = patientRefHash
-	if err := c.saveBatch(ctx, batch, batch.Owner); err != nil {
-		return nil, err
-	}
-	return batch, emit(ctx, EventBatchDispensed, batchEvent{BatchID: batchID, Owner: batch.Owner, State: batch.State})
-}
-
-// RecallBatch pulls a batch from the market. Only the regulator can do it, the batch cannot move
-// again afterwards, and the holder's peer still has to endorse it (state-based endorsement).
-// A recalled batch inside a cargo stays in it, so it arrives with the rest and the recipient
-// takes custody of it to quarantine it.
+// RecallBatch pulls a batch from the market, and with it every batch split from it (and from
+// those): recalling the batch a manufacturer registered recalls the whole lot, wherever its parts
+// are. Only the regulator can do it, a recalled batch cannot move again, and the peer of each
+// holder still has to endorse it (state-based endorsement). Batches already dispensed or
+// recalled are left as they are; the units dispensed from a partly dispensed batch stay
+// dispensed. A recalled batch inside a cargo stays in it, so it arrives with the rest and the
+// recipient takes custody of it to set it aside.
 func (c *PharmaTrace) RecallBatch(ctx contractapi.TransactionContextInterface, batchID string, reason string) (*Batch, error) {
 	if err := requireRegulator(ctx); err != nil {
 		return nil, err
@@ -220,20 +201,40 @@ func (c *PharmaTrace) RecallBatch(ctx contractapi.TransactionContextInterface, b
 	if err != nil {
 		return nil, err
 	}
-	switch batch.State {
-	case StateRecalled:
+	if batch.State == StateRecalled {
 		return nil, conflict("batch %s is already recalled", batchID)
-	case StateDispensed:
-		return nil, conflict("batch %s was already dispensed", batchID)
 	}
-
-	batch.StateBefore = batch.State
-	batch.State = StateRecalled
-	batch.RecallReason = reason
-	if err := c.saveBatch(ctx, batch, holderOf(batch)); err != nil {
+	splits, err := c.descendants(ctx, batchID, MaxRecallBatches)
+	if err != nil {
 		return nil, err
 	}
-	return batch, emit(ctx, EventBatchRecalled, batchEvent{BatchID: batchID, Owner: batch.Owner, State: batch.State, To: batch.PendingTo, Reason: reason})
+
+	recalled, holders := []string{}, []string{}
+	for _, b := range append([]*Batch{batch}, splits...) {
+		if b.State == StateRecalled || b.State == StateDispensed {
+			continue
+		}
+		b.StateBefore = b.State
+		b.State = StateRecalled
+		b.RecallReason = reason
+		if err := c.saveBatch(ctx, b, holderOf(b)); err != nil {
+			return nil, err
+		}
+		recalled = append(recalled, b.ID)
+		if h := holderOf(b); !contains(holders, h) {
+			holders = append(holders, h)
+		}
+	}
+	if len(recalled) == 0 {
+		if len(splits) == 0 {
+			return nil, conflict("batch %s was already dispensed", batchID)
+		}
+		return nil, conflict("batch %s and the batches split from it were already dispensed or recalled", batchID)
+	}
+	return batch, emit(ctx, EventBatchRecalled, batchEvent{
+		BatchID: batchID, Owner: batch.Owner, State: batch.State, To: batch.PendingTo, Reason: reason,
+		Recalled: recalled, Holders: holders,
+	})
 }
 
 // ReleaseBatch lifts a cold-chain quarantine: the regulator reviewed the evidence (how long and

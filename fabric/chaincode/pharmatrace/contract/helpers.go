@@ -115,6 +115,15 @@ func putJSON(ctx contractapi.TransactionContextInterface, objectType string, att
 	return ctx.GetStub().PutState(k, data)
 }
 
+// putMarker writes an index key. Fabric does not allow an empty value, so it stores one byte.
+func putMarker(ctx contractapi.TransactionContextInterface, objectType string, attrs []string) error {
+	k, err := key(ctx, objectType, attrs)
+	if err != nil {
+		return err
+	}
+	return ctx.GetStub().PutState(k, []byte{0})
+}
+
 func emit(ctx contractapi.TransactionContextInterface, name string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {

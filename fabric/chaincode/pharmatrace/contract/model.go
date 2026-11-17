@@ -39,6 +39,13 @@ const (
 // MaxBatchesPerCargo bounds the work (and the endorsement) of one cargo transaction.
 const MaxBatchesPerCargo = 100
 
+// MaxBatchQuantity is the most units a batch can be registered with.
+const MaxBatchQuantity = 10_000_000
+
+// MaxRecallBatches bounds a recall: a batch and every batch split from it (and from those) are
+// recalled in one transaction, which the holder of each one has to endorse.
+const MaxRecallBatches = 200
+
 // Object types used to build composite keys.
 const (
 	objOrg        = "org"
@@ -49,6 +56,8 @@ const (
 	objGatewayOrg = "gatewayorg"
 	objDevice     = "device"
 	objMonitoring = "monitoring"
+	objSplitIndex = "parent~batch"
+	objDispense   = "dispensation"
 )
 
 // Org is an organization of the consortium and its role in the supply chain.
@@ -73,7 +82,7 @@ type Batch struct {
 	PendingTo    string `json:"pendingTo"` // MSP ID of the recipient while IN_TRANSIT, "" otherwise
 	State        string `json:"state"`
 	Cargo        string `json:"cargo"`      // cargo it travels in, "" when it moves on its own
-	PatientRef   string `json:"patientRef"` // sha256 of a patient reference, set when dispensed
+	PatientRef   string `json:"patientRef"` // sha256 of the patient reference of the last dispensation
 	RecallReason string `json:"recallReason"`
 	StateBefore  string `json:"stateBefore"` // state before the recall or the quarantine
 	// Cold-chain quarantine. The reason and the cargo stay after a release, as part of what
@@ -81,8 +90,25 @@ type Batch struct {
 	QuarantineReason string `json:"quarantineReason"`
 	QuarantineCargo  string `json:"quarantineCargo"`
 	ReleaseReason    string `json:"releaseReason"`
-	LastUpdatedAt    string `json:"lastUpdatedAt"`
-	LastTxID         string `json:"lastTxId"`
+	// Units. Quantity is what is left in this batch; Dispensed, what pharmacies handed to
+	// patients from it. A batch split from another one (SplitBatch) has its ParentID, and its
+	// units no longer count in the parent. Batches registered before quantities existed have
+	// both at 0 and can only move and be dispensed whole.
+	Quantity      int    `json:"quantity"`
+	Dispensed     int    `json:"dispensed"`
+	ParentID      string `json:"parentId"`
+	LastUpdatedAt string `json:"lastUpdatedAt"`
+	LastTxID      string `json:"lastTxId"`
+}
+
+// Dispensation is one handover of units of a batch to a patient, by a pharmacy.
+type Dispensation struct {
+	BatchID    string `json:"batchId"`
+	Quantity   int    `json:"quantity"`   // 0 for a batch without quantities, dispensed whole
+	PatientRef string `json:"patientRef"` // sha256 of the patient reference (a prescription number, say)
+	Pharmacy   string `json:"pharmacy"`
+	At         string `json:"at"`
+	TxID       string `json:"txId"`
 }
 
 // HistoryEntry is one version of a batch, as returned by GetHistoryForKey.
@@ -215,6 +241,12 @@ type batchEvent struct {
 	State   string `json:"state"`
 	To      string `json:"to,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// BatchSplit: the new batch and the units it took. BatchDispensed: the units dispensed.
+	NewBatchID string `json:"newBatchId,omitempty"`
+	Quantity   int    `json:"quantity,omitempty"`
+	// BatchRecalled: every batch recalled (the batch and its splits) and the orgs holding them.
+	Recalled []string `json:"recalled,omitempty"`
+	Holders  []string `json:"holders,omitempty"`
 }
 
 type cargoEvent struct {
@@ -248,6 +280,7 @@ const (
 	EventBatchDispensed      = "BatchDispensed"
 	EventBatchRecalled       = "BatchRecalled"
 	EventBatchReleased       = "BatchReleased"
+	EventBatchSplit          = "BatchSplit"
 	EventCargoCreated        = "CargoCreated"
 	EventCargoDispatched     = "CargoDispatched"
 	EventCargoReceived       = "CargoReceived"

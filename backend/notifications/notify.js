@@ -19,13 +19,19 @@ const quarantined = (p, how) => ({
 });
 
 const RULES = {
-    BatchRecalled: (p) => ({
-        severity: "critical",
-        orgs: uniq([p.owner, p.to, REGULATOR]),
-        batchIds: [p.batchId],
-        reason: p.reason,
-        message: `Batch ${p.batchId} was recalled: ${p.reason}`,
-    }),
+    // A recall reaches the batch and what was split from it, wherever each part is.
+    BatchRecalled: (p) => {
+        const recalled = p.recalled && p.recalled.length ? p.recalled : [p.batchId];
+        const parts = recalled.filter((id) => id !== p.batchId).length;
+        const what = parts ? `Batch ${p.batchId} and ${batches(parts)} split from it were` : `Batch ${p.batchId} was`;
+        return {
+            severity: "critical",
+            orgs: uniq([p.owner, p.to, ...(p.holders || []), REGULATOR]),
+            batchIds: recalled,
+            reason: p.reason,
+            message: `${what} recalled: ${p.reason}`,
+        };
+    },
     BatchReleased: (p) => ({
         severity: "info",
         orgs: uniq([p.owner, REGULATOR]),

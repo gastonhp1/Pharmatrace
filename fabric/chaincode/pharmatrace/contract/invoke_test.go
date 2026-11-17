@@ -68,7 +68,7 @@ func TestInvokeThroughContractAPI(t *testing.T) {
 	iv.ok(reg, "RegisterOrg", lab, RoleManufacturer)
 	iv.ok(reg, "RegisterOrg", dist, RoleDistributor)
 
-	out := iv.ok(lab, "RegisterBatch", "B1", "07791234567890", "Insulina", "L1", "2028-03-31")
+	out := iv.ok(lab, "RegisterBatch", "B1", "07791234567890", "Insulina", "L1", "2028-03-31", "500")
 	var b Batch
 	if err := json.Unmarshal([]byte(out), &b); err != nil || b.Owner != lab || b.PendingTo != "" {
 		t.Fatalf("RegisterBatch returned %s (%v)", out, err)
@@ -121,7 +121,7 @@ func TestInvokeThroughContractAPI(t *testing.T) {
 	}
 
 	// Errors come back as a non-OK status with the chaincode's message.
-	if msg, status := iv.call(dist, "RegisterBatch", "B2", "07791234567890", "X", "L", "2028-01-01"); status == shim.OK || !strings.Contains(msg, "only a manufacturer") {
+	if msg, status := iv.call(dist, "RegisterBatch", "B2", "07791234567890", "X", "L", "2028-01-01", "5"); status == shim.OK || !strings.Contains(msg, "only a manufacturer") {
 		t.Fatalf("expected a permission error, got %d %s", status, msg)
 	}
 	if _, status := iv.call(lab, "SetColdChainPolicy", "x", "not-a-number", "1", "1"); status == shim.OK {

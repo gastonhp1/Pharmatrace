@@ -37,8 +37,19 @@ function createPharmaService({ ledger, manufacturer = "LabMSP", auditor = REGULA
         getBatchHistory: (batchId) => read("GetBatchHistory", batchId),
         batchesByOwner: (mspId) => read("BatchesByOwner", mspId),
 
-        registerBatch({ batchId, gtin, product, lot, expiryDate }) {
-            return write(manufacturer, "RegisterBatch", [batchId, gtin, product, lot, expiryDate]);
+        getBatchSplits: (batchId) => read("BatchSplits", batchId),
+        getBatchDescendants: (batchId) => read("BatchDescendants", batchId),
+        getDispensations: (batchId) => read("Dispensations", batchId),
+
+        registerBatch({ batchId, gtin, product, lot, expiryDate, quantity }) {
+            return write(manufacturer, "RegisterBatch", [batchId, gtin, product, lot, expiryDate, quantity]);
+        },
+
+        // The owner takes `quantity` units out of the batch into a new one (to send them to
+        // someone else, for example). It returns the new batch.
+        async splitBatch(batchId, newBatchId, quantity) {
+            const batch = await getBatch(batchId);
+            return write(batch.owner, "SplitBatch", [batchId, newBatchId, quantity]);
         },
 
         async dispatchBatch(batchId, toMsp) {
@@ -54,18 +65,23 @@ function createPharmaService({ ledger, manufacturer = "LabMSP", auditor = REGULA
 
         // Only a hash of the patient reference (a prescription number, for example) reaches the
         // ledger. The plain reference goes through the API but is not stored anywhere.
-        async dispenseBatch(batchId, patientRef) {
+        // Without a quantity, every unit left goes.
+        async dispenseBatch(batchId, patientRef, quantity) {
             const batch = await getBatch(batchId);
             const hash = crypto.createHash("sha256").update(patientRef).digest("hex");
-            return write(batch.owner, "DispenseBatch", [batchId, hash]);
+            if (quantity === undefined) return write(batch.owner, "DispenseBatch", [batchId, hash]);
+            return write(batch.owner, "DispenseUnits", [batchId, quantity, hash]);
         },
 
-        // The regulator recalls; the org that physically holds the batch co-signs (its batch
-        // key requires it).
+        // The regulator recalls the batch and every batch split from it. Each batch key requires
+        // the org that physically holds it, so all of them endorse, plus the regulator.
         async recallBatch(batchId, reason) {
-            const batch = await getBatch(batchId);
-            const holder = batch.pendingTo || batch.owner;
-            return write(REGULATOR, "RecallBatch", [batchId, reason], [holder, REGULATOR]);
+            const [batch, splits] = await Promise.all([getBatch(batchId), read("BatchDescendants", batchId)]);
+            const holders = [batch, ...(splits || [])]
+                .filter((b) => b.state !== "RECALLED" && b.state !== "DISPENSED")
+                .map((b) => b.pendingTo || b.owner);
+            if (holders.length === 0) holders.push(batch.pendingTo || batch.owner);
+            return write(REGULATOR, "RecallBatch", [batchId, reason], [...new Set([...holders, REGULATOR])]);
         },
 
         // A batch that arrived with its cold chain broken is QUARANTINED until the regulator

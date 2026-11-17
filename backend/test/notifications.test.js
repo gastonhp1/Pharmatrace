@@ -57,6 +57,16 @@ describe("notifications: from chaincode events", () => {
         assert.deepEqual(event("BatchReleased", { batchId: "B1", owner: "RegMSP", state: "IN_DISTRIBUTION", reason: "ok" }).orgs, ["RegMSP"]);
     });
 
+    test("a recall of a lot reaches every org holding a part of it", () => {
+        const n = event("BatchRecalled", {
+            batchId: "B1", owner: "LabMSP", state: "RECALLED", reason: "lote",
+            recalled: ["B1", "B1-a", "B1-b"], holders: ["DistMSP", "FarmaMSP"],
+        });
+        assert.deepEqual(n.orgs, ["LabMSP", "DistMSP", "FarmaMSP", "RegMSP"]);
+        assert.deepEqual(n.batchIds, ["B1", "B1-a", "B1-b"]);
+        assert.match(n.message, /^Batch B1 and 2 batches split from it were recalled: lote$/);
+    });
+
     test("a shipment on its way is for its recipient", () => {
         const n = event("CargoDispatched", { cargoId: "C1", owner: "LabMSP", to: "DistMSP", state: "IN_TRANSIT", batchIds: ["B1", "B2"] });
         assert.deepEqual([n.severity, n.orgs], ["info", ["DistMSP"]]);
@@ -65,7 +75,7 @@ describe("notifications: from chaincode events", () => {
     });
 
     test("the rest of the events are not notifications", () => {
-        for (const name of ["BatchRegistered", "ReadingsAnchored", "MonitoringClosed", "CargoCreated", "SomethingElse"]) {
+        for (const name of ["BatchSplit", "BatchDispensed", "BatchRegistered", "ReadingsAnchored", "MonitoringClosed", "CargoCreated", "SomethingElse"]) {
             assert.equal(event(name, { batchId: "B1", cargoId: "C1", owner: "LabMSP" }), null, name);
         }
     });
