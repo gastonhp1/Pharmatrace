@@ -14,6 +14,7 @@ const quarantined = (p, how) => ({
     orgs: uniq([p.owner, REGULATOR]),
     cargoId: p.cargoId,
     batchIds: p.quarantined,
+    reason: p.reason,
     message: `${batches(p.quarantined.length)} of cargo ${p.cargoId} ${how} QUARANTINED: ${p.reason}`,
 });
 
@@ -22,18 +23,21 @@ const RULES = {
         severity: "critical",
         orgs: uniq([p.owner, p.to, REGULATOR]),
         batchIds: [p.batchId],
+        reason: p.reason,
         message: `Batch ${p.batchId} was recalled: ${p.reason}`,
     }),
     BatchReleased: (p) => ({
         severity: "info",
         orgs: uniq([p.owner, REGULATOR]),
         batchIds: [p.batchId],
+        reason: p.reason,
         message: `Batch ${p.batchId} was released from quarantine: ${p.reason}`,
     }),
     BatchDispatched: (p) => ({
         severity: "info",
         orgs: uniq([p.to]),
         batchIds: [p.batchId],
+        from: p.owner,
         message: `Batch ${p.batchId} is on its way from ${p.owner}`,
     }),
     CargoDispatched: (p) => ({
@@ -41,6 +45,7 @@ const RULES = {
         orgs: uniq([p.to]),
         cargoId: p.cargoId,
         batchIds: p.batchIds || [],
+        from: p.owner,
         message: `Cargo ${p.cargoId} (${batches((p.batchIds || []).length)}) is on its way from ${p.owner}`,
     }),
     ColdChainCompromised: (p) => ({
@@ -48,6 +53,7 @@ const RULES = {
         orgs: uniq([p.owner, p.to, REGULATOR]),
         cargoId: p.cargoId,
         batchIds: p.batchIds || [],
+        reason: p.reason,
         message: `The cold chain of cargo ${p.cargoId} was broken: ${p.reason}`,
     }),
     // A cargo that arrives (or is dissolved) is only news when it leaves batches in quarantine.
@@ -55,7 +61,9 @@ const RULES = {
     CargoDissolved: (p) => (p.quarantined && p.quarantined.length ? quarantined(p, "left it") : null),
 };
 
-// event: { name, payload (object), txId, block }. Returns a notification or null.
+// event: { name, payload (object), txId, block }. Returns a notification or null:
+//   { id, block, event, severity, orgs[], batchIds[], cargoId?, reason?, from?, message }
+// `message` is the English text; the structured fields let a client write its own.
 // Fabric allows one event per transaction, so the transaction ID identifies the notification.
 function fromEvent({ name, payload, txId, block }) {
     const rule = RULES[name];

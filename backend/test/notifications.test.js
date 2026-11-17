@@ -39,6 +39,7 @@ describe("notifications: from chaincode events", () => {
         assert.deepEqual(n.batchIds, ["B1", "B2"]);
         assert.deepEqual([n.id, n.block, n.event, n.cargoId], ["tx1", "7", "ColdChainCompromised", "C1"]);
         assert.match(n.message, /cargo C1 was broken: 2100 seconds/);
+        assert.equal(n.reason, "2100 seconds out of range, the policy allows 1800");
     });
 
     test("a cargo that arrives is only news when it leaves batches in quarantine", () => {
@@ -60,6 +61,7 @@ describe("notifications: from chaincode events", () => {
         const n = event("CargoDispatched", { cargoId: "C1", owner: "LabMSP", to: "DistMSP", state: "IN_TRANSIT", batchIds: ["B1", "B2"] });
         assert.deepEqual([n.severity, n.orgs], ["info", ["DistMSP"]]);
         assert.match(n.message, /Cargo C1 \(2 batches\) is on its way from LabMSP/);
+        assert.equal(n.from, "LabMSP");
     });
 
     test("the rest of the events are not notifications", () => {
