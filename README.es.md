@@ -34,14 +34,19 @@ no se publican, y el regulador co-firma cada operación.
       └──────────── el Regulador (RegMSP) co-firma todo y es el único que hace recalls ────────────┘
 ```
 
-- **Lotes.** El laboratorio los registra (GTIN, lote, vencimiento). Solo avanzan al rol siguiente, en dos pasos:
-  quien lo tiene lo **despacha** y el destinatario lo **recibe**. Cada lote tiene su propia política de endorsement
-  (*state-based endorsement*): para cambiarlo tienen que firmar los peers de quien lo tiene y del regulador.
+- **Lotes.** El laboratorio los registra (GTIN, lote, vencimiento, unidades). Solo avanzan al rol siguiente, en dos
+  pasos: quien lo tiene lo **despacha** y el destinatario lo **recibe**. Cada lote tiene su propia política de
+  endorsement (*state-based endorsement*): para cambiarlo tienen que firmar los peers de quien lo tiene y del regulador.
+- **Unidades.** Quien tiene un lote lo puede **dividir**: 300 de sus 1.000 unidades pasan a un lote nuevo con el mismo
+  número de lote, que viaja por su cuenta y apunta al lote del que salió. La farmacia **dispensa** de a pocas
+  unidades; el lote queda `DISPENSED` cuando no le queda ninguna.
 - **Cargamentos.** Varios lotes del mismo dueño viajan juntos de una org a la siguiente, con una valija. Mientras
   están en el cargamento solo se mueven con él.
 - **Precios.** Lo que pagó la droguería al laboratorio lo ven solo esas dos orgs (*private data collection*); el
   resto del canal ve un hash, y el regulador puede comprobar un precio sin verlo.
-- **Recall.** Solo el regulador, en cualquier punto antes de la dispensa. El lote no se mueve más.
+- **Recall.** Solo el regulador, en cualquier punto antes de la dispensa. Alcanza al lote y a todos los que se
+  dividieron de él, estén donde estén: el recall del lote que registró el laboratorio retira el lote entero. Un lote
+  retirado no se mueve más.
 - **Cadena de frío.** La valija firma cada lectura (ECDSA P-256 en un secure element). El gateway verifica las
   firmas contra la clave registrada en el ledger y ancla una raíz de Merkle por ventana; el chaincode da el
   veredicto (`COMPLIANT` o `COMPROMISED`). Detalle en [`iot/`](iot/README.md).
@@ -91,13 +96,16 @@ consorcio real cada org corre su propia API con solo su identidad.
 
 | Método | Ruta | Body / query |
 | --- | --- | --- |
-| POST | `/api/batches` | `batchId`, `gtin`, `product`, `lot`, `expiryDate` (YYYY-MM-DD) |
+| POST | `/api/batches` | `batchId`, `gtin`, `product`, `lot`, `expiryDate` (YYYY-MM-DD), `quantity` (unidades) |
 | GET | `/api/batches/:id` | |
 | GET | `/api/batches/:id/history` | Todas las versiones del lote: la cadena de custodia |
+| POST | `/api/batches/:id/split` | `newBatchId`, `quantity`. El dueño pasa unidades a un lote nuevo |
+| GET | `/api/batches/:id/splits` | Lotes divididos de este; `?all=true`: y de esos (lo que alcanza un recall) |
 | POST | `/api/batches/:id/dispatch` | `to` (MSP ID: `DistMSP`, `FarmaMSP`) |
 | POST | `/api/batches/:id/receive` | |
-| POST | `/api/batches/:id/dispense` | `patientRef` (se guarda solo su SHA-256) |
-| POST | `/api/batches/:id/recall` | `reason` |
+| POST | `/api/batches/:id/dispense` | `patientRef` (se guarda solo su SHA-256), `quantity` (opcional: todas las que quedan) |
+| GET | `/api/batches/:id/dispensations` | Unidades entregadas a pacientes, de la más vieja a la más nueva |
+| POST | `/api/batches/:id/recall` | `reason`. También retira los lotes divididos de este |
 | POST | `/api/batches/:id/release` | `reason`. El regulador levanta una cuarentena |
 | PUT | `/api/batches/:id/terms` | `buyer`, `unitPrice` (texto, `"1234.50"`), `currency`, `quantity` |
 | GET | `/api/batches/:id/terms` | `?leg=manufacturer\|distributor&as=<MSP>` (pide `x-api-key`) |
@@ -170,8 +178,9 @@ y corre ahí también el smoke test, el recorrido por HTTP y el runbook de certi
   Todavía no hay push al celular.
 - **IoT:** el gateway guarda las lecturas en archivos (un solo proceso); no detecta huecos de datos; la evidencia
   prueba qué se midió, no que el sensor no fuera manipulado. Detalle en [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
-- **Modelo:** la cadena es fija (laboratorio → droguería → farmacia), sin devoluciones; un lote se sigue entero,
-  sin serialización por unidad como pide el sistema de trazabilidad de ANMAT.
+- **Modelo:** la cadena es fija (laboratorio → droguería → farmacia), sin devoluciones. Los lotes se cuentan en
+  unidades y se pueden dividir, pero las unidades no tienen número de serie, como pide el sistema de trazabilidad de
+  ANMAT. Un recall alcanza hasta 200 lotes de un mismo lote de origen en una transacción; si son más, va por partes.
 - **Despliegue:** Docker Compose y kind (Helm). AKS con GitOps es el paso siguiente: falta publicar la imagen del
   chaincode en un registro, exponer gRPC con TLS passthrough y cargar los Secrets de identidades desde Key Vault
   ([`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)). Hasta entonces la API desplegada en el cluster no tiene

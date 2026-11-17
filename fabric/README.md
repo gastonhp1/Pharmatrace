@@ -44,13 +44,27 @@ Todos en un canal, `pharmatrace`. Las reglas de quién firma qué:
 | `IN_TRANSIT` | El que despacha (laboratorio → droguería → farmacia, sin saltear) | `DispatchBatch` |
 | `IN_DISTRIBUTION` | La droguería al recibirlo | `ReceiveBatch` |
 | `IN_PHARMACY` | La farmacia al recibirlo | `ReceiveBatch` |
-| `DISPENSED` | La farmacia, con el hash de la receta | `DispenseBatch` |
-| `RECALLED` | Solo el regulador, en cualquier momento antes de la dispensa | `RecallBatch` |
+| `DISPENSED` | La farmacia, al dispensar la última unidad | `DispenseUnits`, `DispenseBatch` |
+| `RECALLED` | Solo el regulador, en cualquier momento antes de la dispensa; alcanza a los lotes divididos | `RecallBatch` |
 | `QUARANTINED` | El chaincode, cuando el lote sale de un cargamento con la cadena de frío rota | `ReceiveCargo`, `DissolveCargo` |
 
 El despacho tiene dos pasos (despacho y recepción) porque en Fabric el lote cambia de quién
 endosa en el momento del despacho: desde ahí lo controla el destinatario. Un lote al que el regulador
 le hace recall en viaje igual llega: el destinatario lo recibe (queda `RECALLED`) para apartarlo.
+
+**Unidades** (`contract/quantity.go`). `RegisterBatch` recibe la cantidad de unidades. Quien tiene
+un lote en la mano (no en viaje ni en un cargamento) puede pasar unidades a un lote nuevo con
+`SplitBatch`: mismo GTIN, número de lote y vencimiento, mismo dueño y estado, y `parentId` apuntando
+al original. Cada parte tiene su propia política de endorsement y viaja por su cuenta. La farmacia
+dispensa con `DispenseUnits` (algunas unidades, cada vez con el hash de la receta) o `DispenseBatch`
+(todas las que quedan); cada entrega queda como registro aparte (`Dispensations`), y el lote pasa a
+`DISPENSED` cuando no quedan unidades. `BatchSplits` y `BatchDescendants` recorren las divisiones.
+
+`RecallBatch` retira el lote y todo lo que se dividió de él (hasta 200 lotes por transacción), sin
+tocar lo ya dispensado. Como cada lote lo tiene que endosar quien lo tiene, el recall de un lote
+repartido lo endosan todas esas orgs más el regulador; la API calcula quiénes son con
+`BatchDescendants`. Los lotes registrados antes de que existieran las cantidades tienen `quantity` 0:
+se mueven y se dispensan enteros, pero no se dividen.
 
 **Cuarentena.** Un lote `QUARANTINED` no se despacha, no entra en otro cargamento y no se dispensa.
 Solo el regulador lo saca de ahí: con `ReleaseBatch` (revisó la evidencia y el lote sigue siendo

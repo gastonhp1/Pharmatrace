@@ -30,7 +30,7 @@ func setup(t *testing.T) *harness {
 func (h *harness) register(id string) {
 	h.t.Helper()
 	h.must(lab, "user1", func(ctx ctxT) error {
-		_, err := h.cc.RegisterBatch(ctx, id, "07791234567890", "Insulina NPH 100 UI/ml", "L2026-10", "2028-03-31")
+		_, err := h.cc.RegisterBatch(ctx, id, "07791234567890", "Insulina NPH 100 UI/ml", "L2026-10", "2028-03-31", 1000)
 		return err
 	})
 }
@@ -76,7 +76,7 @@ func TestFullCustodyChain(t *testing.T) {
 	h := setup(t)
 
 	stub := h.must(lab, "user1", func(ctx ctxT) error {
-		b, err := h.cc.RegisterBatch(ctx, "B1", "07791234567890", "Insulina NPH 100 UI/ml", "L2026-10", "2028-03-31")
+		b, err := h.cc.RegisterBatch(ctx, "B1", "07791234567890", "Insulina NPH 100 UI/ml", "L2026-10", "2028-03-31", 1000)
 		if err == nil && (b.Owner != lab || b.State != StateRegistered) {
 			t.Errorf("new batch: owner %s state %s", b.Owner, b.State)
 		}
@@ -161,7 +161,7 @@ func TestBatchRules(t *testing.T) {
 	h := setup(t)
 	registerFn := func(id, gtin, expiry string) func(ctx ctxT) error {
 		return func(ctx ctxT) error {
-			_, err := h.cc.RegisterBatch(ctx, id, gtin, "Producto", "L1", expiry)
+			_, err := h.cc.RegisterBatch(ctx, id, gtin, "Producto", "L1", expiry, 10)
 			return err
 		}
 	}

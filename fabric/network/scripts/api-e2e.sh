@@ -54,7 +54,7 @@ req() {
 }
 expect() { [[ "$1" == "$2" ]] || fatal "expected '$2', got '$1'"; ok "$3 = $1"; }
 
-batch() { jq -nc --arg id "$1" '{batchId: $id, gtin: "07791234567890", product: "Vacuna antigripal", lot: "L-E2E", expiryDate: "2027-12-31"}'; }
+batch() { jq -nc --arg id "$1" '{batchId: $id, gtin: "07791234567890", product: "Vacuna antigripal", lot: "L-E2E", expiryDate: "2027-12-31", quantity: 1000}'; }
 simulate() { python3 "$REPO/iot/simulator/simulator.py" "$@"; }
 
 E1="E2E-$RUN-1" E2="E2E-$RUN-2" E3="E2E-$RUN-3"
@@ -118,13 +118,27 @@ req POST "/api/batches/$E3/dispatch" 409 '{"to":"FarmaMSP"}' | jq -c .
 req POST "/api/batches/$E3/release" 200 '{"reason":"Excursión breve, estabilidad documentada por el laboratorio"}' | jq -c '{state, releaseReason}'
 expect "$(req GET "/api/batches/$E3" 200 | jq -r .state)" IN_DISTRIBUTION "$E3 after the release"
 
-step "8. $E1 goes Dist -> Farma on its own and is dispensed; $E2 is recalled at Dist"
+step "8. $E1 goes Dist -> Farma on its own and is dispensed"
 req POST "/api/batches/$E1/dispatch" 200 '{"to":"FarmaMSP"}' >/dev/null
 req POST "/api/batches/$E1/receive" 200 >/dev/null
-expect "$(req POST "/api/batches/$E1/dispense" 200 '{"patientRef":"receta-0001"}' | jq -r .state)" DISPENSED "$E1"
+expect "$(req POST "/api/batches/$E1/dispense" 200 '{"patientRef":"receta-0001"}' | jq -r '"\(.state) \(.dispensed)"')" "DISPENSED 1000" "$E1"
 expect "$(req GET "/api/batches/$E1" 200 | jq -r .patientRef)" "$(printf 'receta-0001' | sha256sum | cut -d' ' -f1)" "patientRef on the ledger (a hash)"
-expect "$(req POST "/api/batches/$E2/recall" 200 '{"reason":"Desvío de calidad"}' | jq -r .state)" RECALLED "$E2"
 req GET "/api/batches/$E1/history" 200 | jq -r '.[] | "  \(.timestamp)  \(.batch.owner)  \(.batch.state)  \(.batch.cargo)"'
+
+step "8b. Dist splits 300 units of $E2 for Farma, which dispenses 2; then the regulator recalls the lot"
+E2F="$E2-F"
+req POST "/api/batches/$E2/split" 400 "{\"newBatchId\":\"$E2F\",\"quantity\":1000}" | jq -c . # the whole batch is not a split
+expect "$(req POST "/api/batches/$E2/split" 200 "{\"newBatchId\":\"$E2F\",\"quantity\":300}" | jq -r '"\(.parentId) \(.quantity) \(.owner)"')" "$E2 300 DistMSP" "the part"
+expect "$(req GET "/api/batches/$E2" 200 | jq -r .quantity)" 700 "units left in $E2"
+req POST "/api/batches/$E2F/dispatch" 200 '{"to":"FarmaMSP"}' >/dev/null
+req POST "/api/batches/$E2F/receive" 200 >/dev/null
+expect "$(req POST "/api/batches/$E2F/dispense" 200 '{"patientRef":"receta-0002","quantity":2}' | jq -r '"\(.state) \(.quantity) \(.dispensed)"')" "IN_PHARMACY 298 2" "$E2F after 2 units"
+req POST "/api/batches/$E2F/dispense" 400 '{"patientRef":"receta-0003","quantity":299}' | jq -c . # more than what is left
+expect "$(req GET "/api/batches/$E2F/dispensations" 200 | jq -c '[.[] | {quantity, pharmacy}]')" '[{"quantity":2,"pharmacy":"FarmaMSP"}]' "dispensations of $E2F"
+expect "$(req GET "/api/batches/$E2/splits" 200 | jq -r '[.[].id] | join(",")')" "$E2F" "splits of $E2"
+# One recall reaches the part at the pharmacy too: Dist, Farma and the regulator endorse it.
+expect "$(req POST "/api/batches/$E2/recall" 200 '{"reason":"Desvío de calidad"}' | jq -r .state)" RECALLED "$E2"
+expect "$(req GET "/api/batches/$E2F" 200 | jq -r '"\(.state) \(.quantity) \(.dispensed)"')" "RECALLED 298 2" "$E2F (recalled with its lot)"
 
 step "9. Errors map to HTTP statuses"
 req POST "/api/batches/$E2/recall" 409 '{"reason":"otra vez"}' | jq -c .
@@ -135,13 +149,14 @@ curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/batches/$E3/receive" | 
 step "10. Notifications: the chaincode events reached the feed and the webhook"
 # The events of this run, oldest first. The listener gets them as blocks are committed.
 feed() { req GET "/api/notifications?limit=200$1" 200 | jq -c --arg run "$RUN" '[.[] | select(.message | contains($run))] | reverse'; }
-retry 20 bash -c "curl -sf '$API/api/notifications?limit=200' | jq -e --arg b '$E2' 'any(.[]; .event == \"BatchRecalled\" and .batchIds == [\$b])' >/dev/null" ||
+retry 20 bash -c "curl -sf '$API/api/notifications?limit=200' | jq -e --arg b '$E2' 'any(.[]; .event == \"BatchRecalled\" and .batchIds[0] == \$b)' >/dev/null" ||
   fatal "the recall of $E2 never reached the feed"
 feed "" | jq -r '.[] | "  \(.severity)\t\(.event)\t\(.orgs | join(","))\t\(.message)"'
 expect "$(feed "&severity=critical" | jq -c '[.[].event]')" '["ColdChainCompromised","CargoReceived","BatchRecalled"]' "critical notifications"
 expect "$(feed "" | jq -c --arg c "$CB" '.[] | select(.event == "ColdChainCompromised") | .orgs')" '["LabMSP","RegMSP"]' "who is warned about cargo B"
 expect "$(feed "" | jq -c --arg c "$CB" '.[] | select(.event == "CargoReceived") | .batchIds')" "[\"$E3\"]" "quarantined on arrival"
-expect "$(feed "&org=FarmaMSP" | jq -c '[.[].event]')" '["BatchDispatched"]' "what Farma hears about"
+expect "$(feed "" | jq -c '.[] | select(.event == "BatchRecalled") | [.batchIds, .orgs]')" "[[\"$E2\",\"$E2F\"],[\"DistMSP\",\"FarmaMSP\",\"RegMSP\"]]" "the recall of the lot"
+expect "$(feed "&org=FarmaMSP" | jq -c '[.[].event]')" '["BatchDispatched","BatchDispatched","BatchRecalled"]' "what Farma hears about"
 retry 20 bash -c "[[ \$(grep -c . '$WORK/hooks.jsonl') -ge \$(curl -sf '$API/api/notifications?limit=200' | jq length) ]]" || fatal "the webhook did not get every notification"
 LAST=$(tail -n 1 "$WORK/hooks.jsonl")
 expect "$(echo "$LAST" | jq -r .signature)" \
