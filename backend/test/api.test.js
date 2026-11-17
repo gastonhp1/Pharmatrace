@@ -57,11 +57,15 @@ describe("batches: who acts and who endorses", () => {
     test("register acts as the manufacturer, endorsed with the regulator", async () => {
         const ledger = fakeLedger({ RegisterBatch: (args) => ({ id: args[0], owner: "LabMSP" }) });
         await withApp(ledger, async (call) => {
-            const res = await call("POST", "/api/batches", { batchId: "B1", gtin: "07791234567890", product: "Insulina", lot: "L1", expiryDate: "2028-01-31" });
+            const body = { batchId: "B1", gtin: "07791234567890", product: "Insulina", lot: "L1", expiryDate: "2028-01-31" };
+            assert.equal((await call("POST", "/api/batches", body)).status, 400, "quantity is required");
+            assert.equal((await call("POST", "/api/batches", { ...body, quantity: 1.5 })).status, 400);
+            assert.equal((await call("POST", "/api/batches", { ...body, quantity: 10_000_001 })).status, 400);
+            const res = await call("POST", "/api/batches", { ...body, quantity: 1000 });
             assert.equal(res.status, 200);
             const [submit] = ledger.submits();
             assert.equal(submit.actor, "LabMSP");
-            assert.deepEqual(submit.args, ["B1", "07791234567890", "Insulina", "L1", "2028-01-31"]);
+            assert.deepEqual(submit.args, ["B1", "07791234567890", "Insulina", "L1", "2028-01-31", 1000]);
             assert.deepEqual(submit.endorsingOrgs, ["LabMSP", "RegMSP"]);
         });
     });
@@ -79,12 +83,44 @@ describe("batches: who acts and who endorses", () => {
     });
 
     test("recall acts as the regulator and the holder co-endorses", async () => {
-        const ledger = fakeLedger({ ReadBatch: { id: "B1", owner: "LabMSP", pendingTo: "DistMSP" } });
+        const ledger = fakeLedger({ ReadBatch: { id: "B1", owner: "LabMSP", pendingTo: "DistMSP" }, BatchDescendants: [] });
         await withApp(ledger, async (call) => {
             await call("POST", "/api/batches/B1/recall", { reason: "desvío de calidad" });
             const [recall] = ledger.submits();
             assert.equal(recall.actor, "RegMSP");
             assert.deepEqual(recall.endorsingOrgs, ["DistMSP", "RegMSP"]);
+        });
+    });
+
+    test("a recall that reaches the splits is endorsed by every holder", async () => {
+        const ledger = fakeLedger({
+            ReadBatch: { id: "B1", owner: "DistMSP", pendingTo: "", state: "IN_DISTRIBUTION" },
+            BatchDescendants: [
+                { id: "B1-a", owner: "DistMSP", pendingTo: "FarmaMSP", state: "IN_TRANSIT" },
+                { id: "B1-b", owner: "FarmaMSP", pendingTo: "", state: "IN_PHARMACY" },
+                { id: "B1-c", owner: "LabMSP", pendingTo: "", state: "DISPENSED" }, // not touched: no endorsement needed
+            ],
+        });
+        await withApp(ledger, async (call) => {
+            assert.equal((await call("POST", "/api/batches/B1/recall", { reason: "lote" })).status, 200);
+            const [recall] = ledger.submits();
+            assert.deepEqual(recall.endorsingOrgs, ["DistMSP", "FarmaMSP", "RegMSP"]);
+        });
+    });
+
+    test("split acts as the owner; splits and dispensations are public reads", async () => {
+        const ledger = fakeLedger({ ReadBatch: { id: "B1", owner: "DistMSP", pendingTo: "" }, BatchSplits: [], BatchDescendants: [], Dispensations: [] });
+        await withApp(ledger, async (call) => {
+            assert.equal((await call("POST", "/api/batches/B1/split", { newBatchId: "B1-a" })).status, 400);
+            assert.equal((await call("POST", "/api/batches/B1/split", { newBatchId: "B1-a", quantity: 0 })).status, 400);
+            assert.equal((await call("POST", "/api/batches/B1/split", { newBatchId: "B1-a", quantity: 200 }, { key: null })).status, 401);
+            assert.equal((await call("POST", "/api/batches/B1/split", { newBatchId: "B1-a", quantity: 200 })).status, 200);
+            const [split] = ledger.submits();
+            assert.deepEqual([split.actor, split.fn, split.args, split.endorsingOrgs], ["DistMSP", "SplitBatch", ["B1", "B1-a", 200], ["DistMSP", "RegMSP"]]);
+            for (const [url, fn] of [["/splits", "BatchSplits"], ["/splits?all=true", "BatchDescendants"], ["/dispensations", "Dispensations"]]) {
+                assert.equal((await call("GET", `/api/batches/B1${url}`, undefined, { key: null })).status, 200, url);
+                assert.equal(ledger.calls.at(-1).fn, fn, url);
+            }
         });
     });
 
@@ -102,9 +138,13 @@ describe("batches: who acts and who endorses", () => {
     test("dispense sends only a hash of the patient reference", async () => {
         const ledger = fakeLedger({ ReadBatch: { id: "B1", owner: "FarmaMSP", pendingTo: "" } });
         await withApp(ledger, async (call) => {
+            const hash = crypto.createHash("sha256").update("receta-123").digest("hex");
             await call("POST", "/api/batches/B1/dispense", { patientRef: "receta-123" });
-            const [dispense] = ledger.submits();
-            assert.equal(dispense.args[1], crypto.createHash("sha256").update("receta-123").digest("hex"));
+            assert.equal((await call("POST", "/api/batches/B1/dispense", { patientRef: "receta-123", quantity: 0 })).status, 400);
+            await call("POST", "/api/batches/B1/dispense", { patientRef: "receta-123", quantity: 2 });
+            const [all, units] = ledger.submits();
+            assert.deepEqual([all.fn, all.args], ["DispenseBatch", ["B1", hash]]);
+            assert.deepEqual([units.actor, units.fn, units.args], ["FarmaMSP", "DispenseUnits", ["B1", 2, hash]]);
             assert.ok(!JSON.stringify(ledger.calls).includes("receta-123"));
         });
     });

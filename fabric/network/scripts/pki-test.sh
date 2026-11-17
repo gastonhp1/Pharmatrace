@@ -22,7 +22,7 @@ query() {
   use_org "$1" "$2"
   peer chaincode query -C "$CHANNEL" -n "$CC_NAME" -c "$3"
 }
-register_batch() { call RegisterBatch "$1" 07791234567890 "Insulina NPH 100 UI/ml" L-PKI 2028-01-31; }
+register_batch() { call RegisterBatch "$1" 07791234567890 "Insulina NPH 100 UI/ml" L-PKI 2028-01-31 100; }
 
 step "1. Certificate status (soonest expiry first)"
 # (to a file first: head closing the pipe early would kill `pki status` with SIGPIPE under pipefail)

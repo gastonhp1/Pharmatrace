@@ -36,14 +36,19 @@ The deeper docs (`fabric/`, `iot/`) are in Spanish.
        └─────────── the Regulator (RegMSP) co-signs everything and is the only one that recalls ───────────┘
 ```
 
-- **Batches.** The manufacturer registers them (GTIN, lot, expiry date). They only move to the next role, in two
-  steps: the holder **dispatches** and the recipient **receives**. Each batch has its own endorsement policy
+- **Batches.** The manufacturer registers them (GTIN, lot, expiry date, units). They only move to the next role,
+  in two steps: the holder **dispatches** and the recipient **receives**. Each batch has its own endorsement policy
   (*state-based endorsement*): changing it takes the signatures of the holder's peer and the regulator's peer.
+- **Units.** The holder can **split** a batch: 300 of its 1,000 units go into a new batch with the same lot, which
+  travels on its own and points to the batch it came from. A pharmacy **dispenses** a few units at a time; the
+  batch is `DISPENSED` when none are left.
 - **Cargoes.** Batches of the same owner travel together from one org to the next, with a sensor case. While in
   a cargo they only move with it.
 - **Prices.** What the distributor paid the manufacturer is visible only to those two orgs (*private data
   collection*); the rest of the channel sees a hash, and the regulator can check a price without seeing it.
-- **Recalls.** Only the regulator, at any point before dispensing. The batch never moves again.
+- **Recalls.** Only the regulator, at any point before dispensing. A recall reaches the batch and every batch
+  split from it, wherever they are: recalling the batch the manufacturer registered recalls the whole lot. A
+  recalled batch never moves again.
 - **Cold chain.** The case signs every reading (ECDSA P-256 in a secure element). The gateway verifies the
   signatures against the key registered in the ledger and anchors one Merkle root per window; the chaincode
   gives the verdict (`COMPLIANT` or `COMPROMISED`). Details in [`iot/`](iot/README.md).
@@ -94,13 +99,16 @@ consortium each org runs its own API with only its own identity.
 
 | Method | Route | Body / query |
 | --- | --- | --- |
-| POST | `/api/batches` | `batchId`, `gtin`, `product`, `lot`, `expiryDate` (YYYY-MM-DD) |
+| POST | `/api/batches` | `batchId`, `gtin`, `product`, `lot`, `expiryDate` (YYYY-MM-DD), `quantity` (units) |
 | GET | `/api/batches/:id` | |
 | GET | `/api/batches/:id/history` | Every version of the batch: the chain of custody |
+| POST | `/api/batches/:id/split` | `newBatchId`, `quantity`. The owner takes units out into a new batch |
+| GET | `/api/batches/:id/splits` | Batches split from it; `?all=true`: and from those (what a recall reaches) |
 | POST | `/api/batches/:id/dispatch` | `to` (MSP ID: `DistMSP`, `FarmaMSP`) |
 | POST | `/api/batches/:id/receive` | |
-| POST | `/api/batches/:id/dispense` | `patientRef` (only its SHA-256 is stored) |
-| POST | `/api/batches/:id/recall` | `reason` |
+| POST | `/api/batches/:id/dispense` | `patientRef` (only its SHA-256 is stored), `quantity` (optional: every unit left) |
+| GET | `/api/batches/:id/dispensations` | Units handed to patients, oldest first |
+| POST | `/api/batches/:id/recall` | `reason`. Also recalls every batch split from it |
 | POST | `/api/batches/:id/release` | `reason`. The regulator lifts a quarantine |
 | PUT | `/api/batches/:id/terms` | `buyer`, `unitPrice` (string, `"1234.50"`), `currency`, `quantity` |
 | GET | `/api/batches/:id/terms` | `?leg=manufacturer\|distributor&as=<MSP>` (needs `x-api-key`) |
@@ -174,8 +182,9 @@ HTTP trip and the certificate runbook there too.
 - **IoT:** the gateway stores readings in files (single process); it does not detect data gaps; the evidence
   proves what was measured, not that the sensor was not tampered with. Details in
   [`iot/docs/THREAT_MODEL.md`](iot/docs/THREAT_MODEL.md).
-- **Model:** the chain is fixed (manufacturer → distributor → pharmacy), with no returns; a batch is tracked as a
-  whole, without the per-unit serialization that Argentina's ANMAT traceability system requires.
+- **Model:** the chain is fixed (manufacturer → distributor → pharmacy), with no returns. Batches are counted in
+  units and can be split, but units have no serial numbers, which Argentina's ANMAT traceability system requires.
+  A recall reaches up to 200 batches of one lot in a single transaction; past that it has to go by parts.
 - **Deployment:** Docker Compose and kind (Helm). AKS with GitOps is the next step: it needs the chaincode image in
   a registry, gRPC exposed with TLS passthrough and the identity Secrets loaded from Key Vault
   ([`fabric/docs/KUBERNETES.md`](fabric/docs/KUBERNETES.md)). Until then the API deployed in the cluster has no

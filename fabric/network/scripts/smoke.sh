@@ -57,7 +57,7 @@ TERMS=$(jq -nc --arg b "$B1" '{batchId: $b, seller: "LabMSP", buyer: "DistMSP", 
 TERMS_T="{\"terms\":\"$(b64 "$TERMS")\"}"
 
 step "1. Lab registers $B1 (endorsed by Lab + Reg)"
-must invoke lab User1 "lab reg" "$(call RegisterBatch "$B1" 07791234567890 "Insulina NPH 100 UI/ml" L2026-10 2028-03-31)"
+must invoke lab User1 "lab reg" "$(call RegisterBatch "$B1" 07791234567890 "Insulina NPH 100 UI/ml" L2026-10 2028-03-31 1000)"
 
 step "2. Lab stores the price for Dist in a private collection (endorsed by Lab + Dist, the only members)"
 must invoke lab User1 "lab dist" "$(call SetCommercialTerms "$B1")" "$TERMS_T"
@@ -104,21 +104,32 @@ must invoke farma User1 "farma reg" "$(call ReceiveCargo "$CARGO")"
 expect "$(query reg User1 "$(call GetMonitoring "$CARGO")" | jq -r .verdict)" COMPLIANT "cold-chain verdict"
 expect "$(query reg User1 "$(call GetDevice "$DEVICE")" | jq -r .activeCargo)" "" "valija free again"
 PATIENT=$(printf 'receta-%s' "$RUN" | sha256sum | cut -d' ' -f1)
+# A few units to one patient, then the rest.
+must invoke farma User1 "farma reg" "$(call DispenseUnits "$B1" 2 "$PATIENT")"
+expect "$(query reg User1 "$(call ReadBatch "$B1")" | jq -r '"\(.state) \(.quantity) \(.dispensed)"')" "IN_PHARMACY 998 2" "after dispensing 2 units"
 must invoke farma User1 "farma reg" "$(call DispenseBatch "$B1" "$PATIENT")"
+expect "$(query reg User1 "$(call Dispensations "$B1")" | jq -c '[.[].quantity]')" "[2,998]" "dispensations of $B1"
 
 step "9. Custody history from the ledger (GetHistoryForKey)"
-query reg User1 "$(call GetBatchHistory "$B1")" | jq -r '.[] | "  \(.timestamp)  \(.batch.owner)  \(.batch.state)  \(.batch.cargo)"'
-expect "$(query reg User1 "$(call GetBatchHistory "$B1")" | jq length)" 7 "versions of $B1"
+query reg User1 "$(call GetBatchHistory "$B1")" | jq -r '.[] | "  \(.timestamp)  \(.batch.owner)  \(.batch.state)  \(.batch.quantity)  \(.batch.cargo)"'
+expect "$(query reg User1 "$(call GetBatchHistory "$B1")" | jq length)" 8 "versions of $B1"
 
-step "10. Recall: only the regulator, and the holder's peer co-signs"
-must invoke lab User1 "lab reg" "$(call RegisterBatch "$B2" 07791234567890 "Insulina NPH 100 UI/ml" L2026-11 2028-04-30)"
+step "10. Split and recall: only the regulator, and every holder's peer co-signs"
+must invoke lab User1 "lab reg" "$(call RegisterBatch "$B2" 07791234567890 "Insulina NPH 100 UI/ml" L2026-11 2028-04-30 500)"
+must invoke lab User1 "lab reg" "$(call SplitBatch "$B2" "$B2-a" 100)"
+expect "$(query reg User1 "$(call ReadBatch "$B2-a")" | jq -r '"\(.parentId) \(.quantity)"')" "$B2 100" "the split part"
+expect "$(query reg User1 "$(call ReadBatch "$B2")" | jq -r .quantity)" 400 "units left in $B2"
+# The part goes to Dist: from now on its key needs Dist's peer, so the recall needs Lab, Dist and Reg.
+must invoke lab User1 "lab reg" "$(call DispatchBatch "$B2-a" DistMSP)"
 must_fail "only the regulator" invoke lab User1 "lab reg" "$(call RecallBatch "$B2" "test")"
-must invoke reg User1 "lab reg" "$(call RecallBatch "$B2" "Desvío de calidad informado por el laboratorio")"
+must_fail ENDORSEMENT_POLICY_FAILURE invoke reg User1 "lab reg" "$(call RecallBatch "$B2" "Desvío de calidad informado por el laboratorio")"
+must invoke reg User1 "lab dist reg" "$(call RecallBatch "$B2" "Desvío de calidad informado por el laboratorio")"
 expect "$(query lab User1 "$(call ReadBatch "$B2")" | jq -r .state)" RECALLED "state of $B2"
+expect "$(query lab User1 "$(call ReadBatch "$B2-a")" | jq -r .state)" RECALLED "state of the part $B2-a, on its way to Dist"
 
 step "11. Raft: with one orderer down, the channel keeps ordering (2 of 3 is a quorum)"
 node_stop orderer1.orderer.pharmatrace.ar
-must retry 5 invoke lab User1 "lab reg" "$(call RegisterBatch "$B2-raft" 07791234567890 "Insulina" L1 2028-01-31)"
+must retry 5 invoke lab User1 "lab reg" "$(call RegisterBatch "$B2-raft" 07791234567890 "Insulina" L1 2028-01-31 10)"
 node_start orderer1.orderer.pharmatrace.ar
 ok "transaction committed with orderer1 stopped"
 
